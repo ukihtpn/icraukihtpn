@@ -50,7 +50,7 @@
   #app{min-height:100vh;display:flex;flex-direction:column;}
   .hazard-strip{height:7px;background:repeating-linear-gradient(-45deg,var(--orange-600) 0 14px,var(--brand-black) 14px 28px);flex-shrink:0;position:sticky;top:0;z-index:21;}
 
-  header.topbar{background:var(--white);border-bottom:1px solid var(--line);padding:18px 28px 0 28px;position:sticky;top:7px;z-index:20;}
+  header.topbar{background:var(--white);padding:18px 28px 0 28px;position:sticky;top:7px;z-index:20;}
   .topbar-inner{display:flex;align-items:center;justify-content:space-between;max-width:1180px;margin:0 auto;flex-wrap:wrap;gap:10px;padding-bottom:14px;}
   .brand{display:flex;align-items:center;gap:12px;}
   .brand-mark{width:40px;height:40px;border-radius:9px;background:linear-gradient(155deg,var(--orange-600),var(--brand-black));display:flex;align-items:center;justify-content:center;flex-shrink:0;}
@@ -1086,14 +1086,18 @@ function renderDetail(main){
 
         <div class="card" style="padding:20px;margin-bottom:18px;">
           <div class="section-title">Infection Control Class</div>
-          <div style="display:flex;gap:16px;align-items:center;margin-top:8px;flex-wrap:wrap;">
-            <span class="class-badge c-${p.icraClass}" style="font-size:14px;padding:6px 16px;">Class ${p.icraClass}</span>
-            <span style="font-size:13px;color:var(--ink-soft);">Activity Type ${p.activityType} &middot; ${RISK_GROUPS[p.riskGroup].title}</span>
-          </div>
-          <div class="precaution-cols">
-            <div><h4>During Construction</h4><ul>${CLASS_PRECAUTIONS[p.icraClass].during.map(x=>`<li>${x}</li>`).join('')}</ul></div>
-            <div><h4>Upon Completion</h4><ul>${CLASS_PRECAUTIONS[p.icraClass].completion.map(x=>`<li>${x}</li>`).join('')}</ul></div>
-          </div>
+          ${p.icraClass && CLASS_PRECAUTIONS[p.icraClass] ? `
+            <div style="display:flex;gap:16px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+              <span class="class-badge c-${p.icraClass}" style="font-size:14px;padding:6px 16px;">Class ${p.icraClass}</span>
+              <span style="font-size:13px;color:var(--ink-soft);">${p.activityType?'Activity Type '+p.activityType+' &middot; ':''}${RISK_GROUPS[p.riskGroup]?RISK_GROUPS[p.riskGroup].title:''}</span>
+            </div>
+            <div class="precaution-cols">
+              <div><h4>During Construction</h4><ul>${CLASS_PRECAUTIONS[p.icraClass].during.map(x=>`<li>${x}</li>`).join('')}</ul></div>
+              <div><h4>Upon Completion</h4><ul>${CLASS_PRECAUTIONS[p.icraClass].completion.map(x=>`<li>${x}</li>`).join('')}</ul></div>
+            </div>
+          ` : `
+            <p class="section-sub" style="margin-top:6px;">Not yet classified${RISK_GROUPS[p.riskGroup]?' &mdash; Risk Group: '+RISK_GROUPS[p.riskGroup].title:''}. This looks like a project imported from the spreadsheet before the Activity Type/Class was captured digitally &mdash; press <strong>Edit</strong> above to complete it.</p>
+          `}
         </div>
 
         <div class="card" style="padding:20px;margin-bottom:18px;">
@@ -1343,18 +1347,21 @@ async function submitFeedback(){
 function printReport(id, stage, visitIdx){
   const p = findProject(id); if(!p) return;
   const area = document.getElementById('printArea');
+  const hasClass = p.icraClass && CLASS_PRECAUTIONS[p.icraClass];
   let body = `<h2>ICRA &ndash; ${esc(p.wardUnit)}</h2><p><strong>Infection Control Unit, Hospital Tengku Permaisuri Norashikin</strong></p>`;
   const baseTable = `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;" border="1" cellpadding="6">
     <tr><td>Ward/Unit</td><td colspan="3">${esc(p.wardUnit)}</td></tr>
     <tr><td>PIC In-Charge</td><td>${esc((p.picInCharge||[]).join(', '))}</td><td>Contractor</td><td>${esc(p.kontraktor)}</td></tr>
-    <tr><td>ICRA Class</td><td colspan="3"><strong>Class ${p.icraClass}</strong> (Activity ${p.activityType} &middot; ${RISK_GROUPS[p.riskGroup].title})</td></tr>
+    <tr><td>ICRA Class</td><td colspan="3"><strong>${hasClass?'Class '+p.icraClass:'Not yet classified'}</strong>${p.activityType?' (Activity '+p.activityType+')':''}${RISK_GROUPS[p.riskGroup]?' &middot; '+RISK_GROUPS[p.riskGroup].title:''}</td></tr>
     <tr><td>Job Scope</td><td colspan="3">${esc(p.skopKerja)}</td></tr>
   </table>`;
 
   if(stage==='pre'){
     body += baseTable;
-    body += `<h3 style="margin-top:16px;">During Construction</h3><ul>${CLASS_PRECAUTIONS[p.icraClass].during.map(x=>`<li>${x}</li>`).join('')}</ul>`;
-    body += `<h3>Upon Completion</h3><ul>${CLASS_PRECAUTIONS[p.icraClass].completion.map(x=>`<li>${x}</li>`).join('')}</ul>`;
+    if(hasClass){
+      body += `<h3 style="margin-top:16px;">During Construction</h3><ul>${CLASS_PRECAUTIONS[p.icraClass].during.map(x=>`<li>${x}</li>`).join('')}</ul>`;
+      body += `<h3>Upon Completion</h3><ul>${CLASS_PRECAUTIONS[p.icraClass].completion.map(x=>`<li>${x}</li>`).join('')}</ul>`;
+    }
     if(p.additionalRecommendation) body += `<h3>Additional Recommendation</h3><p>${esc(p.additionalRecommendation)}</p>`;
     body += `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;" border="1" cellpadding="6">
       <tr><td><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}<br>${esc(p.permit.jawatan)}<br>${esc(p.permit.syarikat)}<br>${fmtDate(p.permit.tarikh)}</td>
