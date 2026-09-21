@@ -204,6 +204,12 @@
     #printArea{display:block !important;padding:20px;font-family:'Inter',sans-serif;}
     #printArea h2{font-family:'Space Grotesk',sans-serif;}
   }
+  .modal-backdrop{position:fixed;inset:0;background:rgba(14,12,9,0.55);display:flex;align-items:center;justify-content:center;z-index:500;padding:16px;}
+  .modal-box{background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:88vh;overflow-y:auto;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,0.3);}
+  .modal-box h3{font-family:'Space Grotesk',sans-serif;margin:0 0 4px 0;color:var(--orange-800);}
+  .modal-box .field-hint{margin-bottom:14px;}
+  .radio-row{display:flex;align-items:center;gap:8px;padding:8px 0;font-size:14px;cursor:pointer;}
+  .radio-row input{width:16px;height:16px;}
   @media (max-width:640px){
     header.topbar{padding:14px 16px 0 16px;}
     main{padding:16px;}
@@ -214,6 +220,7 @@
 <body>
 <div id="app"></div>
 <div id="printArea"></div>
+<div id="printModalRoot"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -323,6 +330,61 @@ async function apiUploadFile(name, mimeType, base64){
 }
 async function apiFeedback(payload){ return config.gasUrl ? gasFeedback(payload) : localFeedback(payload); }
 
+/* ---- References (Reference Library tab) ---- */
+async function gasListReferences(){
+  const res = await fetch(config.gasUrl + '?action=listReferences');
+  const data = await res.json();
+  if(!data.ok) throw new Error(data.error || 'List failed');
+  return data.references || [];
+}
+async function gasSaveReference(ref){
+  const res = await fetch(config.gasUrl, {
+    method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({action:'saveReference', reference:ref})
+  });
+  const data = await res.json();
+  if(!data.ok) throw new Error(data.error || 'Save failed');
+  return data.reference;
+}
+async function gasDeleteReference(id){
+  const res = await fetch(config.gasUrl, {
+    method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({action:'deleteReference', id})
+  });
+  const data = await res.json();
+  if(!data.ok) throw new Error(data.error || 'Delete failed');
+}
+const LOCAL_REFERENCES_KEY = 'icra-htpn-references-v1';
+async function localListReferences(){
+  try{ const res = await window.storage.get(LOCAL_REFERENCES_KEY, true); return res && res.value ? JSON.parse(res.value) : []; }
+  catch(e){ return []; }
+}
+async function localSaveReferenceAll(arr){
+  const res = await window.storage.set(LOCAL_REFERENCES_KEY, JSON.stringify(arr), true);
+  if(!res) throw new Error('Local save failed');
+}
+async function localSaveReference(ref){
+  const arr = await localListReferences();
+  const idx = arr.findIndex(r=>r.id===ref.id);
+  if(idx>-1) arr[idx]=ref; else arr.push(ref);
+  await localSaveReferenceAll(arr);
+  return ref;
+}
+async function localDeleteReference(id){
+  const arr = (await localListReferences()).filter(r=>r.id!==id);
+  await localSaveReferenceAll(arr);
+}
+async function apiListReferences(){ return config.gasUrl ? gasListReferences() : localListReferences(); }
+async function apiSaveReference(ref){ return config.gasUrl ? gasSaveReference(ref) : localSaveReference(ref); }
+async function apiDeleteReference(id){ return config.gasUrl ? gasDeleteReference(id) : localDeleteReference(id); }
+
+async function ensureReferencesLoaded(){
+  if(referencesReady) return;
+  try{ references = await apiListReferences(); }catch(e){ references = []; }
+  referencesReady = true;
+  if(view==='reference') renderMain();
+}
+
 function fileToBase64(file){
   return new Promise((resolve,reject)=>{
     const r = new FileReader();
@@ -416,6 +478,17 @@ const CLASS_PRECAUTIONS = {
 };
 
 const MONTHS_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const FINDING_CATEGORIES = [
+  'Environment / Housekeeping',
+  'Aircond / Ventilation (HVAC)',
+  'Medical Equipment',
+  'Barrier / Containment',
+  'Dust Control',
+  'Waste Management',
+  'Structural / Ceiling / Wall',
+  'Hand Hygiene / PPE',
+  'Other'
+];
 const STATUS_META = {
   PRA:{label:'Pre-Construction', pill:'pill-pra'},
   DALAM:{label:'During Construction', pill:'pill-dalam'},
@@ -431,6 +504,7 @@ let dataReady = false;
 let loadError = '';
 let view = 'dashboard';
 let dashFilter = 'pending'; // 'pending' | 'all'
+let stageFilter = 'ALL'; // 'ALL' | 'PRA' | 'DALAM' | 'TC' — sub-filter within Pending
 let searchTerm = '';
 let currentId = null;
 let editingId = null;
@@ -439,6 +513,9 @@ let duringDraft = null;
 let newIcraStage = 'pre';
 let newIcraProjectId = null;
 let currentAuditor = null;
+let references = [];
+let referencesReady = false;
+let refDraft = { title:'', url:'' };
 
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function uid(){ return 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -449,7 +526,7 @@ function blankForm(){
   return {
     id:null, wardUnit:'', location:'',
     picInCharge: currentAuditor ? [currentAuditor] : [], tarikhPraKonsultasi:'', tarikhICRA:todayISO(),
-    tarikhMula:'', tarikhTamat:'', anggaranTempoh:'', kontraktor:'',
+    tarikhMula:'', tarikhTamat:'', anggaranTempoh:'', kontraktor:'', kontraktorTel:'',
     skopKerja:'', memoFile:null, ganttFile:null,
     activityType:null, riskGroup:null, icraClass:null,
     additionalRecommendation:''
@@ -472,6 +549,28 @@ function selectAuditor(name){
   render();
 }
 function getMatrixOptions(riskGroup, activityType){ if(!riskGroup||!activityType) return null; return MATRIX[riskGroup][activityType]; }
+
+/* Auto-calculate Estimated Duration from Start/Finish Date.
+   force=true always overwrites; otherwise only fills when the field is
+   still empty, so it doesn't clobber a manually-typed or gantt-read value. */
+function recalcDuration(force){
+  const f = formState; if(!f) return;
+  if(!f.tarikhMula || !f.tarikhTamat) return;
+  if(!force && f.anggaranTempoh) return;
+  const d1 = new Date(f.tarikhMula+'T00:00:00'), d2 = new Date(f.tarikhTamat+'T00:00:00');
+  if(isNaN(d1)||isNaN(d2)||d2<d1) return;
+  const days = Math.round((d2-d1)/86400000)+1;
+  let text;
+  if(days>=7){
+    const weeks = Math.round(days/7*10)/10;
+    text = weeks+' week'+(weeks!==1?'s':'')+' ('+days+' days)';
+  } else {
+    text = days+' day'+(days!==1?'s':'');
+  }
+  f.anggaranTempoh = text;
+  const el = document.getElementById('duration-input');
+  if(el) el.value = text;
+}
 function findProject(id){ return projects.find(p=>p.id===id); }
 
 let toastTimer=null;
@@ -497,7 +596,7 @@ function render(){
   if(view==='splash'){ app.innerHTML = splashHtml(); return; }
   if(view==='auditor'){ app.innerHTML = auditorHtml(); return; }
 
-  const tabs = [['dashboard','Dashboard'],['form','New ICRA Form'],['guide','Matrix Guide'],['feedback','Feedback']];
+  const tabs = [['dashboard','Dashboard'],['form','New ICRA Form'],['guide','Matrix Guide'],['reference','Reference'],['feedback','Feedback']];
   app.innerHTML = `
     <div class="hazard-strip"></div>
     <header class="topbar">
@@ -577,6 +676,10 @@ function renderMain(){
   if(view==='form') return renderForm(main);
   if(view==='detail') return renderDetail(main);
   if(view==='guide') return renderGuide(main);
+  if(view==='reference'){
+    if(!referencesReady){ ensureReferencesLoaded(); main.innerHTML = `<div class="empty-state"><p>Loading references&hellip;</p></div>`; return; }
+    return renderReference(main);
+  }
   if(view==='feedback') return renderFeedback(main);
 }
 
@@ -647,6 +750,7 @@ function renderDashboard(main){
 
   let list = projects.slice();
   if(dashFilter==='pending') list = list.filter(p=>p.status!=='SELESAI');
+  if(dashFilter==='pending' && stageFilter!=='ALL') list = list.filter(p=>p.status===stageFilter);
   if(searchTerm){
     const q=searchTerm.toLowerCase();
     list = list.filter(p=> ((p.wardUnit||'')+' '+(p.skopKerja||'')+' '+((p.picInCharge||[]).join(' '))).toLowerCase().includes(q));
@@ -670,6 +774,13 @@ function renderDashboard(main){
           <button class="toggle-btn ${dashFilter==='pending'?'active':''}" onclick="dashFilter='pending';renderMain()">Pending</button>
           <button class="toggle-btn ${dashFilter==='all'?'active':''}" onclick="dashFilter='all';renderMain()">All Projects</button>
         </div>
+        ${dashFilter==='pending' ? `
+        <select onchange="stageFilter=this.value; renderMain()">
+          <option value="ALL" ${stageFilter==='ALL'?'selected':''}>All Stages</option>
+          <option value="PRA" ${stageFilter==='PRA'?'selected':''}>Pre-Construction</option>
+          <option value="DALAM" ${stageFilter==='DALAM'?'selected':''}>During Construction</option>
+          <option value="TC" ${stageFilter==='TC'?'selected':''}>Testing &amp; Commissioning</option>
+        </select>` : ''}
         <input class="search-box" type="text" placeholder="Search department / job scope&hellip;" value="${esc(searchTerm)}" oninput="searchTerm=this.value; renderMain()">
         <button class="btn btn-primary" style="margin-left:auto" onclick="goView('form')">+ New ICRA</button>
       </div>
@@ -785,15 +896,20 @@ function preFormHtml(){
       </div>
 
       <div class="form-grid">
+        <div class="field"><label class="field-label">Contractor Phone Number</label>
+          <input type="tel" value="${esc(f.kontraktorTel)}" oninput="formState.kontraktorTel=this.value" placeholder="e.g. 012-3456789"></div>
+      </div>
+
+      <div class="form-grid">
         <div class="field"><label class="field-label">Construction Start Date</label>
-          <input type="date" value="${f.tarikhMula}" oninput="formState.tarikhMula=this.value"></div>
+          <input type="date" value="${f.tarikhMula}" oninput="formState.tarikhMula=this.value; recalcDuration();"></div>
         <div class="field"><label class="field-label">Construction Finish Date</label>
-          <input type="date" value="${f.tarikhTamat}" oninput="formState.tarikhTamat=this.value"></div>
+          <input type="date" value="${f.tarikhTamat}" oninput="formState.tarikhTamat=this.value; recalcDuration();"></div>
       </div>
 
       <div class="field"><label class="field-label">Estimated Duration</label>
-        <input type="text" id="duration-input" value="${esc(f.anggaranTempoh)}" oninput="formState.anggaranTempoh=this.value" placeholder="e.g. 2 weeks">
-        <div class="field-hint">Filled automatically if you upload a project schedule/chart below, or type it in manually.</div>
+        <input type="text" id="duration-input" value="${esc(f.anggaranTempoh)}" oninput="formState.anggaranTempoh=this.value">
+        <div class="field-hint">Auto-calculated from Start/Finish Date, or from an uploaded project schedule/chart &mdash; you can also type it in manually. <a href="#" class="attach-link" onclick="recalcDuration(true);return false;">Recalculate from dates</a></div>
       </div>
 
       <div class="field"><label class="field-label">Memo Panggilan (Call Memo) &mdash; image or PDF</label>
@@ -979,7 +1095,7 @@ async function submitForm(){
   if(!f.activityType || !f.riskGroup || !f.icraClass){ showToast('Please complete Activity Type, Risk Group and ICRA Class.'); return; }
 
   let record;
-  const autoPermit = { nama:f.kontraktor, jawatan:'Contractor', syarikat:f.kontraktor, tel:'', tarikh:f.tarikhICRA };
+  const autoPermit = { nama:f.kontraktor, jawatan:'Contractor', syarikat:f.kontraktor, tel:f.kontraktorTel||'', tarikh:f.tarikhICRA };
   const autoAuth = { nama:(f.picInCharge||[]).join(', '), jawatan:'PIC UKI', unit:'Unit Kawalan Infeksi', tarikh:f.tarikhICRA };
   if(editingId){
     record = findProject(editingId);
@@ -987,7 +1103,7 @@ async function submitForm(){
       wardUnit:f.wardUnit, location:f.location,
       picInCharge:f.picInCharge, tarikhPraKonsultasi:f.tarikhPraKonsultasi, tarikhICRA:f.tarikhICRA,
       tarikhMula:f.tarikhMula, tarikhTamat:f.tarikhTamat, anggaranTempoh:f.anggaranTempoh,
-      kontraktor:f.kontraktor, skopKerja:f.skopKerja, memoFile:f.memoFile, ganttFile:f.ganttFile,
+      kontraktor:f.kontraktor, kontraktorTel:f.kontraktorTel, skopKerja:f.skopKerja, memoFile:f.memoFile, ganttFile:f.ganttFile,
       activityType:f.activityType, riskGroup:f.riskGroup, icraClass:f.icraClass,
       additionalRecommendation:f.additionalRecommendation,
       permit:autoPermit, auth:autoAuth
@@ -998,7 +1114,7 @@ async function submitForm(){
       wardUnit:f.wardUnit, location:f.location,
       picInCharge:f.picInCharge, tarikhPraKonsultasi:f.tarikhPraKonsultasi, tarikhICRA:f.tarikhICRA,
       tarikhMula:f.tarikhMula, tarikhTamat:f.tarikhTamat, anggaranTempoh:f.anggaranTempoh,
-      kontraktor:f.kontraktor, skopKerja:f.skopKerja, memoFile:f.memoFile, ganttFile:f.ganttFile,
+      kontraktor:f.kontraktor, kontraktorTel:f.kontraktorTel, skopKerja:f.skopKerja, memoFile:f.memoFile, ganttFile:f.ganttFile,
       activityType:f.activityType, riskGroup:f.riskGroup, icraClass:f.icraClass,
       additionalRecommendation:f.additionalRecommendation,
       permit:autoPermit, auth:autoAuth,
@@ -1022,7 +1138,7 @@ function editProject(id){
     wardUnit:p.wardUnit, location:p.location,
     picInCharge:(p.picInCharge||[]).slice(), tarikhPraKonsultasi:p.tarikhPraKonsultasi, tarikhICRA:p.tarikhICRA,
     tarikhMula:p.tarikhMula, tarikhTamat:p.tarikhTamat, anggaranTempoh:p.anggaranTempoh,
-    kontraktor:p.kontraktor, skopKerja:p.skopKerja, memoFile:p.memoFile, ganttFile:p.ganttFile,
+    kontraktor:p.kontraktor, kontraktorTel:p.kontraktorTel||'', skopKerja:p.skopKerja, memoFile:p.memoFile, ganttFile:p.ganttFile,
     activityType:p.activityType, riskGroup:p.riskGroup, icraClass:p.icraClass,
     additionalRecommendation:p.additionalRecommendation||''
   };
@@ -1072,6 +1188,7 @@ function renderDetail(main){
           <div class="section-title">Pre-Construction Information</div>
           <div class="info-row"><span class="k">PIC In-Charge</span><span class="v">${esc((p.picInCharge||[]).join(', '))||'&mdash;'}</span></div>
           <div class="info-row"><span class="k">Contractor</span><span class="v">${esc(p.kontraktor)||'&mdash;'}</span></div>
+          <div class="info-row"><span class="k">Contractor Phone</span><span class="v">${esc(p.kontraktorTel)||'&mdash;'}</span></div>
           <div class="info-row"><span class="k">Pre-Consultation Date</span><span class="v">${fmtDate(p.tarikhPraKonsultasi)}</span></div>
           <div class="info-row"><span class="k">ICRA Date</span><span class="v">${fmtDate(p.tarikhICRA)}</span></div>
           <div class="info-row"><span class="k">Start Date</span><span class="v">${fmtDate(p.tarikhMula)}</span></div>
@@ -1102,18 +1219,23 @@ function renderDetail(main){
         <div class="card" style="padding:20px;margin-bottom:18px;">
           <div class="section-title">During Construction Visits</div>
           ${(p.duringLogs||[]).length===0 ? `<p class="section-sub" style="margin-top:6px;">No visits logged yet.</p>` : (p.duringLogs||[]).map((l,idx)=>`
-            <div class="visit-card">
-              <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div class="visit-card" id="visit-card-${l.id}">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
                 <strong style="font-size:13px;color:var(--orange-800);">Visit ${idx+1} &middot; ${fmtDate(l.tarikh)}</strong>
-                <button class="btn btn-outline btn-sm" onclick="printReport('${p.id}','during',${idx})">Print</button>
+                <div style="display:flex;gap:6px;">
+                  <button class="btn btn-outline btn-sm" onclick="startEditDuringVisit('${p.id}','${l.id}')">Edit</button>
+                  <button class="btn btn-outline btn-sm" onclick="printReport('${p.id}','during',${idx})">Print</button>
+                </div>
               </div>
               ${(l.findings||[]).map(fnd=>`
                 <div style="margin-top:8px;font-size:13px;">
+                  ${fnd.category||fnd.location?`<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:2px;">${fnd.category?`<span class="pill" style="background:var(--orange-100);color:var(--orange-800);">${esc(fnd.category)}</span>`:''}${fnd.location?' &middot; '+esc(fnd.location):''}</div>`:''}
                   <div>${esc(fnd.text)}</div>
                   <div class="photo-thumb-row">${(fnd.photos||[]).map(ph=>`<a href="${ph.url}" target="_blank"><img class="photo-thumb" src="${ph.thumb}" alt="finding photo"></a>`).join('')}</div>
                 </div>
               `).join('')}
-              ${l.recommendation?`<div style="margin-top:8px;font-size:13px;"><strong>Recommendation:</strong> ${esc(l.recommendation)}</div>`:''}
+              ${visitRecommendations(l).length ? `<div style="margin-top:8px;font-size:13px;"><strong>Recommendation:</strong>
+                <ol style="margin:4px 0 0 0;padding-left:18px;">${visitRecommendations(l).map(r=>`<li>${esc(r)}</li>`).join('')}</ol></div>` : ''}
               <div class="field-hint" style="margin-top:8px;">Upload signed copy (contractor acknowledgement):</div>
               <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','during',${idx})">
               ${l.signedFile?`<div style="margin-top:6px;"><a class="attach-link" href="${l.signedFile.url}" target="_blank">&#128206; ${esc(l.signedFile.name)} (signed)</a></div>`:''}
@@ -1151,24 +1273,49 @@ function renderDetail(main){
 }
 
 /* ---- During Construction: draft visit with multiple findings + photos ---- */
+function visitRecommendations(l){
+  if(!l) return [];
+  if(Array.isArray(l.recommendations)) return l.recommendations.filter(x=>x && x.trim());
+  if(l.recommendation) return [l.recommendation];
+  return [];
+}
 function startDuringDraft(pid){
-  duringDraft = { pid, tarikh:todayISO(), findings:[{text:'',photos:[]}], recommendation:'' };
+  duringDraft = { pid, editingVisitId:null, tarikh:todayISO(), findings:[{location:'',category:'',text:'',photos:[]}], recommendations:[''] };
   renderDuringDraft();
+}
+function startEditDuringVisit(pid, visitId){
+  const p = findProject(pid); if(!p) return;
+  const l = (p.duringLogs||[]).find(v=>v.id===visitId); if(!l) return;
+  duringDraft = {
+    pid, editingVisitId: visitId, tarikh: l.tarikh,
+    findings: (l.findings||[]).map(f=>({ location:f.location||'', category:f.category||'', text:f.text||'', photos:(f.photos||[]).map(ph=>({...ph})) })),
+    recommendations: (()=>{ const r = visitRecommendations(l); return r.length ? r.slice() : ['']; })()
+  };
+  if(duringDraft.findings.length===0) duringDraft.findings.push({location:'',category:'',text:'',photos:[]});
+  renderDuringDraft();
+  const area = document.getElementById('during-draft-area');
+  if(area) area.scrollIntoView({behavior:'smooth', block:'start'});
 }
 function renderDuringDraft(){
   const el = document.getElementById('during-draft-area');
+  if(!el) return;
   if(!duringDraft){ el.innerHTML=''; return; }
+  const isEdit = !!duringDraft.editingVisitId;
   el.innerHTML = `
     <div class="visit-card" style="margin-top:12px;background:var(--orange-50);">
-      <label class="field-label">Visit Date</label>
+      <strong style="font-size:13px;color:var(--orange-800);">${isEdit?'Edit Visit':'New Visit'}</strong>
+      <label class="field-label" style="margin-top:8px;">Visit Date</label>
       <div class="field"><input type="date" value="${duringDraft.tarikh}" oninput="duringDraft.tarikh=this.value"></div>
       <div id="findings-list">${duringDraftFindingsHtml()}</div>
       <button class="btn btn-outline btn-sm" onclick="addDuringFinding()">+ Add Another Finding</button>
-      <div class="field" style="margin-top:12px;"><label class="field-label">Overall Recommendation</label>
-        <textarea oninput="duringDraft.recommendation=this.value">${esc(duringDraft.recommendation)}</textarea></div>
-      <div style="display:flex;gap:8px;">
+      <div class="field" style="margin-top:12px;">
+        <label class="field-label">Recommendation</label>
+        <div id="recs-list">${duringDraftRecommendationsHtml()}</div>
+        <button class="btn btn-outline btn-sm" onclick="addDuringRecommendation()">+ Add Recommendation</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
         <button class="btn btn-outline" onclick="duringDraft=null; renderDuringDraft()">Cancel</button>
-        <button class="btn btn-primary" onclick="saveDuringDraft()">Save Visit</button>
+        <button class="btn btn-primary" onclick="saveDuringDraft()">${isEdit?'Save Changes':'Save Visit'}</button>
       </div>
     </div>
   `;
@@ -1177,15 +1324,34 @@ function duringDraftFindingsHtml(){
   return duringDraft.findings.map((fnd,i)=>`
     <div class="finding-block">
       <label class="field-label">Finding ${i+1}</label>
+      <div class="field"><input type="text" value="${esc(fnd.location)}" oninput="duringDraft.findings[${i}].location=this.value" placeholder="Location (e.g. Ward 3B, near aircond vent)"></div>
+      <div class="field">
+        <select onchange="duringDraft.findings[${i}].category=this.value">
+          <option value="">&mdash; Select category &mdash;</option>
+          ${FINDING_CATEGORIES.map(c=>`<option value="${esc(c)}" ${fnd.category===c?'selected':''}>${esc(c)}</option>`).join('')}
+        </select>
+      </div>
       <textarea oninput="duringDraft.findings[${i}].text=this.value" placeholder="Describe the finding&hellip;">${esc(fnd.text)}</textarea>
-      <input type="file" accept="image/*" capture="environment" multiple onchange="handleFindingPhotos(this,${i})">
-      <div class="photo-thumb-row" id="finding-photos-${i}">${fnd.photos.map(ph=>`<img class="photo-thumb" src="${ph.thumb}" alt="">`).join('')}</div>
+      <input type="file" accept="image/*,application/pdf" multiple onchange="handleFindingPhotos(this,${i})">
+      <div class="photo-thumb-row" id="finding-photos-${i}">${fnd.photos.map((ph,pi)=>`<span style="position:relative;display:inline-block;"><img class="photo-thumb" src="${ph.thumb}" alt=""><button type="button" onclick="removeFindingPhoto(${i},${pi})" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;line-height:1;cursor:pointer;">&times;</button></span>`).join('')}</div>
       ${duringDraft.findings.length>1?`<button class="btn-ghost btn btn-sm" onclick="removeDuringFinding(${i})">Remove finding</button>`:''}
     </div>
   `).join('');
 }
-function addDuringFinding(){ duringDraft.findings.push({text:'',photos:[]}); renderDuringDraft(); }
+function duringDraftRecommendationsHtml(){
+  return duringDraft.recommendations.map((r,i)=>`
+    <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;">
+      <span style="padding-top:8px;font-size:12.5px;color:var(--ink-faint);">${i+1}.</span>
+      <textarea style="flex:1;" oninput="duringDraft.recommendations[${i}]=this.value" placeholder="Recommendation ${i+1}&hellip;">${esc(r)}</textarea>
+      ${duringDraft.recommendations.length>1?`<button type="button" class="btn-ghost btn btn-sm" onclick="removeDuringRecommendation(${i})">&times;</button>`:''}
+    </div>
+  `).join('');
+}
+function addDuringFinding(){ duringDraft.findings.push({location:'',category:'',text:'',photos:[]}); renderDuringDraft(); }
 function removeDuringFinding(i){ duringDraft.findings.splice(i,1); renderDuringDraft(); }
+function addDuringRecommendation(){ duringDraft.recommendations.push(''); renderDuringDraft(); }
+function removeDuringRecommendation(i){ duringDraft.recommendations.splice(i,1); renderDuringDraft(); }
+function removeFindingPhoto(i,pi){ duringDraft.findings[i].photos.splice(pi,1); renderDuringDraft(); }
 async function handleFindingPhotos(input, i){
   const files = Array.from(input.files||[]);
   for(const file of files){
@@ -1195,14 +1361,24 @@ async function handleFindingPhotos(input, i){
       duringDraft.findings[i].photos.push({name:file.name, url:res.url, thumb:res.thumb});
     }catch(e){ showToast('Photo upload failed: '+e.message); }
   }
-  document.getElementById('finding-photos-'+i).innerHTML = duringDraft.findings[i].photos.map(ph=>`<img class="photo-thumb" src="${ph.thumb}" alt="">`).join('');
+  renderDuringDraft();
 }
 async function saveDuringDraft(){
   const p = findProject(duringDraft.pid); if(!p) return;
   const hasText = duringDraft.findings.some(f=>f.text.trim());
   if(!hasText){ showToast('Please add at least one finding.'); return; }
+  const findings = duringDraft.findings.filter(f=>f.text.trim()).map(f=>({ location:f.location||'', category:f.category||'', text:f.text, photos:f.photos||[] }));
+  const recommendations = duringDraft.recommendations.filter(r=>r && r.trim());
   p.duringLogs = p.duringLogs || [];
-  p.duringLogs.push({ id:uid(), tarikh:duringDraft.tarikh, findings:duringDraft.findings.filter(f=>f.text.trim()), recommendation:duringDraft.recommendation, signedFile:null });
+  if(duringDraft.editingVisitId){
+    const idx = p.duringLogs.findIndex(v=>v.id===duringDraft.editingVisitId);
+    if(idx>-1){
+      p.duringLogs[idx] = { ...p.duringLogs[idx], tarikh:duringDraft.tarikh, findings, recommendations };
+      delete p.duringLogs[idx].recommendation;
+    }
+  } else {
+    p.duringLogs.push({ id:uid(), tarikh:duringDraft.tarikh, findings, recommendations, signedFile:null });
+  }
   if(p.status==='PRA') p.status='DALAM';
   try{
     const saved = await apiSave(p);
@@ -1320,6 +1496,73 @@ function renderGuide(main){
 /* ============================================================
    FEEDBACK
    ============================================================ */
+/* ============================================================
+   REFERENCE LIBRARY
+   ============================================================ */
+function renderReference(main){
+  main.innerHTML = `
+    <div class="card" style="padding:24px;margin-bottom:18px;">
+      <div class="section-title">Reference Library</div>
+      <h2 style="margin:2px 0 4px 0;font-size:20px;">Add a Reference</h2>
+      <p class="section-sub">Attach a guideline, SOP or official document &mdash; paste a Google Drive link, or upload a file directly.</p>
+      <div class="field"><label class="field-label">Title</label>
+        <input type="text" id="ref-title" value="${esc(refDraft.title)}" oninput="refDraft.title=this.value" placeholder="e.g. ICRA Official Guideline 2024"></div>
+      <div class="field"><label class="field-label">Google Drive Link (paste an existing share link)</label>
+        <input type="text" id="ref-url" value="${esc(refDraft.url)}" oninput="refDraft.url=this.value" placeholder="https://drive.google.com/&hellip;"></div>
+      <div class="field"><label class="field-label">Or upload a file (image / PDF)</label>
+        <input type="file" accept="image/*,application/pdf" onchange="handleRefFileUpload(this)">
+        <div class="upload-row" id="ref-file-status"></div>
+      </div>
+      <button class="btn btn-primary" onclick="submitReference()">Save Reference</button>
+    </div>
+    <div class="card" style="padding:20px;">
+      <div class="section-title">Saved References</div>
+      ${references.length===0 ? `<p class="section-sub" style="margin-top:6px;">No references added yet.</p>` : `
+        <div style="display:grid;gap:10px;margin-top:10px;">
+          ${references.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).map(r=>`
+            <div class="card" style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+              <div>
+                <a class="attach-link" href="${esc(r.url)}" target="_blank" style="font-size:14px;">${esc(r.title)}</a>
+                <div class="meta" style="font-size:12px;color:var(--ink-faint);margin-top:2px;">Added by ${esc(r.addedBy)||'&mdash;'} &middot; ${fmtDate((r.createdAt||'').slice(0,10))}</div>
+              </div>
+              <button class="btn-danger-ghost" onclick="deleteReferenceUI('${r.id}')">Delete</button>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    </div>
+  `;
+}
+async function handleRefFileUpload(input){
+  const file = input.files[0]; if(!file) return;
+  document.getElementById('ref-file-status').innerHTML = `<span class="upload-status">Uploading&hellip;</span>`;
+  try{
+    const base64 = await fileToBase64(file);
+    const res = await apiUploadFile(file.name, file.type, base64);
+    refDraft.url = res.url;
+    if(!refDraft.title) refDraft.title = file.name;
+    document.getElementById('ref-title').value = refDraft.title;
+    document.getElementById('ref-url').value = refDraft.url;
+    document.getElementById('ref-file-status').innerHTML = `<a class="attach-link" href="${res.url}" target="_blank">&#128206; ${esc(file.name)}</a>`;
+  }catch(e){ showToast('Upload failed: '+e.message); }
+}
+async function submitReference(){
+  if(!refDraft.title || !refDraft.url){ showToast('Please add a title and either a Drive link or an uploaded file.'); return; }
+  const ref = { id:uid(), title:refDraft.title, url:refDraft.url, addedBy:currentAuditor||'', createdAt:new Date().toISOString() };
+  try{
+    const saved = await apiSaveReference(ref);
+    references.push(saved && saved.id ? saved : ref);
+    refDraft = {title:'', url:''};
+    showToast('Reference saved.');
+    renderMain();
+  }catch(e){ showToast('Save failed: '+e.message); }
+}
+async function deleteReferenceUI(id){
+  if(!confirm('Delete this reference?')) return;
+  try{ await apiDeleteReference(id); references = references.filter(r=>r.id!==id); showToast('Reference deleted.'); renderMain(); }
+  catch(e){ showToast('Delete failed: '+e.message); }
+}
+
 function renderFeedback(main){
   main.innerHTML = `
     <div class="card" style="padding:24px;max-width:560px;margin:0 auto;">
@@ -1343,14 +1586,64 @@ async function submitFeedback(){
 /* ============================================================
    PRINT
    ============================================================ */
+let printCtx = null;
+const ADDRESSEE_OPTIONS = ['Pembangunan','User','Contractor','Others'];
 function printReport(id, stage, visitIdx){
   const p = findProject(id); if(!p) return;
-  const area = document.getElementById('printArea');
+  printCtx = { id, stage, visitIdx, addressee:'Pembangunan', addresseeOther:'', includeAll:false };
+  renderPrintModal();
+}
+function closePrintModal(){ printCtx=null; document.getElementById('printModalRoot').innerHTML=''; }
+function renderPrintModal(){
+  const root = document.getElementById('printModalRoot');
+  if(!printCtx){ root.innerHTML=''; return; }
+  root.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this) closePrintModal();">
+      <div class="modal-box">
+        <h3>Print Report</h3>
+        <p class="field-hint">Who is this report addressed to?</p>
+        ${ADDRESSEE_OPTIONS.map(o=>`
+          <label class="radio-row"><input type="radio" name="addressee" value="${o}" ${printCtx.addressee===o?'checked':''} onchange="printCtx.addressee='${o}'"> ${o}</label>
+        `).join('')}
+        ${printCtx.addressee==='Others'?`<div class="field" style="margin-top:4px;"><input type="text" placeholder="Please specify" value="${esc(printCtx.addresseeOther)}" oninput="printCtx.addresseeOther=this.value"></div>`:''}
+        <label class="radio-row" style="margin-top:10px;border-top:1px solid var(--line-strong);padding-top:14px;">
+          <input type="checkbox" ${printCtx.includeAll?'checked':''} onchange="printCtx.includeAll=this.checked"> Include all findings from this project (all visits)
+        </label>
+        <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap;">
+          <button class="btn btn-outline" onclick="closePrintModal()">Cancel</button>
+          <button class="btn btn-outline" onclick="generateReport('word')">Save as Word</button>
+          <button class="btn btn-primary" onclick="generateReport('pdf')">Print / Save as PDF</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function addresseeLabel(){
+  return printCtx.addressee==='Others' ? (printCtx.addresseeOther.trim()||'Others') : printCtx.addressee;
+}
+function collectAllFindings(p){
+  const rows = [];
+  (p.duringLogs||[]).forEach((l,vi)=>{
+    (l.findings||[]).forEach(f=>{
+      const bits = [];
+      if(f.category) bits.push(f.category);
+      if(f.location) bits.push(f.location);
+      const prefix = bits.length ? `[Visit ${vi+1} &middot; ${esc(bits.join(' &middot; '))}] ` : `[Visit ${vi+1}] `;
+      rows.push(prefix + esc(f.text));
+    });
+  });
+  if(p.tc && p.tc.dapatan) rows.push('[T&amp;C] ' + esc(p.tc.dapatan));
+  return rows;
+}
+function buildReportBody(){
+  const { id, stage, visitIdx, includeAll } = printCtx;
+  const p = findProject(id); if(!p) return '';
   const hasClass = p.icraClass && CLASS_PRECAUTIONS[p.icraClass];
   let body = `<h2>ICRA &ndash; ${esc(p.wardUnit)}</h2><p><strong>Infection Control Unit, Hospital Tengku Permaisuri Norashikin</strong></p>`;
+  body += `<p><strong>To:</strong> ${esc(addresseeLabel())}</p>`;
   const baseTable = `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;" border="1" cellpadding="6">
     <tr><td>Ward/Unit</td><td colspan="3">${esc(p.wardUnit)}</td></tr>
-    <tr><td>PIC In-Charge</td><td>${esc((p.picInCharge||[]).join(', '))}</td><td>Contractor</td><td>${esc(p.kontraktor)}</td></tr>
+    <tr><td>PIC In-Charge</td><td>${esc((p.picInCharge||[]).join(', '))}</td><td>Contractor</td><td>${esc(p.kontraktor)}${p.kontraktorTel?' ('+esc(p.kontraktorTel)+')':''}</td></tr>
     <tr><td>ICRA Class</td><td colspan="3"><strong>${hasClass?'Class '+p.icraClass:'Not yet classified'}</strong>${p.activityType?' (Activity '+p.activityType+')':''}${RISK_GROUPS[p.riskGroup]?' &middot; '+RISK_GROUPS[p.riskGroup].title:''}</td></tr>
     <tr><td>Job Scope</td><td colspan="3">${esc(p.skopKerja)}</td></tr>
   </table>`;
@@ -1370,8 +1663,12 @@ function printReport(id, stage, visitIdx){
     body += `<h3>During Construction Assessment &ndash; Visit ${visitIdx+1}</h3>`;
     body += baseTable;
     body += `<p><strong>Visit Date:</strong> ${fmtDate(l.tarikh)}</p>`;
-    body += `<h3>Findings</h3><ol>${l.findings.map(f=>`<li>${esc(f.text)}</li>`).join('')}</ol>`;
-    body += `<h3>Recommendation</h3><p>${esc(l.recommendation)}</p>`;
+    body += `<h3>Findings</h3><ol>${l.findings.map(f=>{
+      const bits=[]; if(f.category) bits.push(esc(f.category)); if(f.location) bits.push(esc(f.location));
+      return `<li>${bits.length?'<strong>['+bits.join(' &middot; ')+']</strong> ':''}${esc(f.text)}</li>`;
+    }).join('')}</ol>`;
+    const recs = visitRecommendations(l);
+    if(recs.length) body += `<h3>Recommendation</h3><ol>${recs.map(r=>`<li>${esc(r)}</li>`).join('')}</ol>`;
     body += `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;" border="1" cellpadding="6">
       <tr><td><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
   } else if(stage==='tc'){
@@ -1382,9 +1679,40 @@ function printReport(id, stage, visitIdx){
     body += `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;" border="1" cellpadding="6">
       <tr><td><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
   }
-  area.innerHTML = body;
-  document.body.classList.add('printing');
-  window.print();
+
+  const issueRows = includeAll ? collectAllFindings(p) : (stage==='during' ? (p.duringLogs[visitIdx].findings||[]).map(f=>esc(f.text)) : []);
+  if(issueRows.length){
+    body += `<h3 style="margin-top:20px;">Feedback Form</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px;" border="1" cellpadding="6">
+        <tr style="background:#f5ead0;"><td style="width:55%;"><strong>Issue</strong></td><td><strong>Feedback</strong></td></tr>
+        ${issueRows.map(r=>`<tr><td>${r}</td><td>&nbsp;</td></tr>`).join('')}
+      </table>`;
+  }
+  return body;
+}
+function generateReport(mode){
+  const body = buildReportBody();
+  if(!body) return;
+  if(mode==='pdf'){
+    const area = document.getElementById('printArea');
+    area.innerHTML = body;
+    closePrintModal();
+    document.body.classList.add('printing');
+    window.print();
+  } else {
+    const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head><meta charset="utf-8"><title>ICRA Report</title></head>
+      <body style="font-family:Calibri,Arial,sans-serif;">${body}</body></html>`;
+    const blob = new Blob(['﻿', html], {type:'application/msword'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const p = findProject(printCtx.id);
+    a.href = url; a.download = `ICRA_${(p&&p.wardUnit||'Report').replace(/[^a-z0-9]+/gi,'_')}.doc`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    closePrintModal();
+    showToast('Word document downloaded.');
+  }
 }
 window.onafterprint = ()=> document.body.classList.remove('printing');
 
