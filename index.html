@@ -201,8 +201,7 @@
   #printArea{display:none;}
   @media print{
     body.printing > *:not(#printArea){display:none !important;}
-    #printArea{display:block !important;padding:20px;font-family:'Inter',sans-serif;}
-    #printArea h2{font-family:'Space Grotesk',sans-serif;}
+    #printArea{display:block !important;padding:20px;}
   }
   .modal-backdrop{position:fixed;inset:0;background:rgba(14,12,9,0.55);display:flex;align-items:center;justify-content:center;z-index:500;padding:16px;}
   .modal-box{background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:88vh;overflow-y:auto;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,0.3);}
@@ -1607,9 +1606,10 @@ function renderPrintModal(){
           <label class="radio-row"><input type="radio" name="addressee" value="${o}" ${printCtx.addressee===o?'checked':''} onchange="printCtx.addressee='${o}'"> ${o}</label>
         `).join('')}
         ${printCtx.addressee==='Others'?`<div class="field" style="margin-top:4px;"><input type="text" placeholder="Please specify" value="${esc(printCtx.addresseeOther)}" oninput="printCtx.addresseeOther=this.value"></div>`:''}
+        ${printCtx.stage!=='during'?`
         <label class="radio-row" style="margin-top:10px;border-top:1px solid var(--line-strong);padding-top:14px;">
           <input type="checkbox" ${printCtx.includeAll?'checked':''} onchange="printCtx.includeAll=this.checked"> Include all findings from this project (all visits)
-        </label>
+        </label>`:`<p class="field-hint" style="margin-top:10px;border-top:1px solid var(--line-strong);padding-top:14px;">This report will include only this visit's findings.</p>`}
         <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap;">
           <button class="btn btn-outline" onclick="closePrintModal()">Cancel</button>
           <button class="btn btn-outline" onclick="generateReport('word')">Save as Word</button>
@@ -1627,6 +1627,22 @@ function renderPrintModal(){
 function addresseeLabel(){
   return printCtx.addressee==='Others' ? (printCtx.addresseeOther.trim()||'Others') : printCtx.addressee;
 }
+/* ---- Report styling: single consistent font/size scheme for print, PDF and Word ---- */
+const RPT_FONT = "Calibri, Arial, sans-serif";
+const RPT_S = {
+  h1: `font-family:${RPT_FONT};font-size:18pt;font-weight:700;margin:0 0 4pt 0;color:#17140F;`,
+  h2: `font-family:${RPT_FONT};font-size:13pt;font-weight:700;margin:14pt 0 4pt 0;color:#17140F;`,
+  p:  `font-family:${RPT_FONT};font-size:11pt;margin:0 0 6pt 0;line-height:1.4;`,
+  table: `font-family:${RPT_FONT};font-size:11pt;width:100%;border-collapse:collapse;margin-top:6pt;`,
+  td: `border:1px solid #999;padding:6pt 8pt;font-family:${RPT_FONT};font-size:11pt;vertical-align:top;`,
+  tdHead: `border:1px solid #999;padding:6pt 8pt;font-family:${RPT_FONT};font-size:11pt;background:#f5ead0;font-weight:700;`,
+  li: `font-family:${RPT_FONT};font-size:11pt;margin-bottom:4pt;line-height:1.4;`,
+  photo: `width:110pt;max-height:85pt;object-fit:cover;border:1px solid #999;margin:4pt 6pt 0 0;`
+};
+function reportPhotosHtml(photos){
+  if(!photos || !photos.length) return '';
+  return `<div style="margin-top:4pt;">${photos.map(ph=>`<img src="${ph.thumb||ph.url}" style="${RPT_S.photo}" alt="finding photo">`).join('')}</div>`;
+}
 function collectAllFindings(p){
   const rows = [];
   (p.duringLogs||[]).forEach((l,vi)=>{
@@ -1635,65 +1651,72 @@ function collectAllFindings(p){
       if(f.category) bits.push(f.category);
       if(f.location) bits.push(f.location);
       const prefix = bits.length ? `[Visit ${vi+1} &middot; ${esc(bits.join(' &middot; '))}] ` : `[Visit ${vi+1}] `;
-      rows.push(prefix + esc(f.text));
+      rows.push({ text: prefix + esc(f.text), photos: f.photos||[] });
     });
   });
-  if(p.tc && p.tc.dapatan) rows.push('[T&amp;C] ' + esc(p.tc.dapatan));
+  if(p.tc && p.tc.dapatan) rows.push({ text: '[T&amp;C] ' + esc(p.tc.dapatan), photos: [] });
   return rows;
 }
 function buildReportBody(){
   const { id, stage, visitIdx, includeAll } = printCtx;
   const p = findProject(id); if(!p) return '';
   const hasClass = p.icraClass && CLASS_PRECAUTIONS[p.icraClass];
-  let body = `<h2>ICRA &ndash; ${esc(p.wardUnit)}</h2><p><strong>Infection Control Unit, Hospital Tengku Permaisuri Norashikin</strong></p>`;
-  body += `<p><strong>To:</strong> ${esc(addresseeLabel())}</p>`;
-  const baseTable = `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;" border="1" cellpadding="6">
-    <tr><td>Ward/Unit</td><td colspan="3">${esc(p.wardUnit)}</td></tr>
-    <tr><td>PIC In-Charge</td><td>${esc((p.picInCharge||[]).join(', '))}</td><td>Contractor</td><td>${esc(p.kontraktor)}${p.kontraktorTel?' ('+esc(p.kontraktorTel)+')':''}</td></tr>
-    <tr><td>ICRA Class</td><td colspan="3"><strong>${hasClass?'Class '+p.icraClass:'Not yet classified'}</strong>${p.activityType?' (Activity '+p.activityType+')':''}${RISK_GROUPS[p.riskGroup]?' &middot; '+RISK_GROUPS[p.riskGroup].title:''}</td></tr>
-    <tr><td>Job Scope</td><td colspan="3">${esc(p.skopKerja)}</td></tr>
+  let body = `<div style="font-family:${RPT_FONT};color:#17140F;">`;
+  body += `<h1 style="${RPT_S.h1}">ICRA &ndash; ${esc(p.wardUnit)}</h1><p style="${RPT_S.p}"><strong>Infection Control Unit, Hospital Tengku Permaisuri Norashikin</strong></p>`;
+  body += `<p style="${RPT_S.p}"><strong>To:</strong> ${esc(addresseeLabel())}</p>`;
+  const baseTable = `<table style="${RPT_S.table}" border="1" cellpadding="6">
+    <tr><td style="${RPT_S.td}">Ward/Unit</td><td style="${RPT_S.td}" colspan="3">${esc(p.wardUnit)}</td></tr>
+    <tr><td style="${RPT_S.td}">PIC In-Charge</td><td style="${RPT_S.td}">${esc((p.picInCharge||[]).join(', '))}</td><td style="${RPT_S.td}">Contractor</td><td style="${RPT_S.td}">${esc(p.kontraktor)}${p.kontraktorTel?' ('+esc(p.kontraktorTel)+')':''}</td></tr>
+    <tr><td style="${RPT_S.td}">ICRA Class</td><td style="${RPT_S.td}" colspan="3"><strong>${hasClass?'Class '+p.icraClass:'Not yet classified'}</strong>${p.activityType?' (Activity '+p.activityType+')':''}${RISK_GROUPS[p.riskGroup]?' &middot; '+RISK_GROUPS[p.riskGroup].title:''}</td></tr>
+    <tr><td style="${RPT_S.td}">Job Scope</td><td style="${RPT_S.td}" colspan="3">${esc(p.skopKerja)}</td></tr>
   </table>`;
+
+  let issueRows = []; // {text, photos}
 
   if(stage==='pre'){
     body += baseTable;
     if(hasClass){
-      body += `<h3 style="margin-top:16px;">During Construction</h3><ul>${CLASS_PRECAUTIONS[p.icraClass].during.map(x=>`<li>${x}</li>`).join('')}</ul>`;
-      body += `<h3>Upon Completion</h3><ul>${CLASS_PRECAUTIONS[p.icraClass].completion.map(x=>`<li>${x}</li>`).join('')}</ul>`;
+      body += `<h2 style="${RPT_S.h2}">During Construction</h2><ul>${CLASS_PRECAUTIONS[p.icraClass].during.map(x=>`<li style="${RPT_S.li}">${x}</li>`).join('')}</ul>`;
+      body += `<h2 style="${RPT_S.h2}">Upon Completion</h2><ul>${CLASS_PRECAUTIONS[p.icraClass].completion.map(x=>`<li style="${RPT_S.li}">${x}</li>`).join('')}</ul>`;
     }
-    if(p.additionalRecommendation) body += `<h3>Additional Recommendation</h3><p>${esc(p.additionalRecommendation)}</p>`;
-    body += `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;" border="1" cellpadding="6">
-      <tr><td><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}<br>${esc(p.permit.jawatan)}<br>${esc(p.permit.syarikat)}<br>${fmtDate(p.permit.tarikh)}</td>
-      <td><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}<br>${esc(p.auth.jawatan)}<br>${esc(p.auth.unit)}<br>${fmtDate(p.auth.tarikh)}</td></tr></table>`;
+    if(p.additionalRecommendation) body += `<h2 style="${RPT_S.h2}">Additional Recommendation</h2><p style="${RPT_S.p}">${esc(p.additionalRecommendation)}</p>`;
+    body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
+      <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}<br>${esc(p.permit.jawatan)}<br>${esc(p.permit.syarikat)}<br>${fmtDate(p.permit.tarikh)}</td>
+      <td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}<br>${esc(p.auth.jawatan)}<br>${esc(p.auth.unit)}<br>${fmtDate(p.auth.tarikh)}</td></tr></table>`;
+    if(includeAll) issueRows = collectAllFindings(p);
   } else if(stage==='during'){
     const l = p.duringLogs[visitIdx];
-    body += `<h3>During Construction Assessment &ndash; Visit ${visitIdx+1}</h3>`;
+    body += `<h2 style="${RPT_S.h2}">During Construction Assessment &ndash; Visit ${visitIdx+1}</h2>`;
     body += baseTable;
-    body += `<p><strong>Visit Date:</strong> ${fmtDate(l.tarikh)}</p>`;
-    body += `<h3>Findings</h3><ol>${l.findings.map(f=>{
+    body += `<p style="${RPT_S.p}"><strong>Visit Date:</strong> ${fmtDate(l.tarikh)}</p>`;
+    body += `<h2 style="${RPT_S.h2}">Findings</h2><ol>${l.findings.map(f=>{
       const bits=[]; if(f.category) bits.push(esc(f.category)); if(f.location) bits.push(esc(f.location));
-      return `<li>${bits.length?'<strong>['+bits.join(' &middot; ')+']</strong> ':''}${esc(f.text)}</li>`;
+      return `<li style="${RPT_S.li}">${bits.length?'<strong>['+bits.join(' &middot; ')+']</strong> ':''}${esc(f.text)}${reportPhotosHtml(f.photos)}</li>`;
     }).join('')}</ol>`;
     const recs = visitRecommendations(l);
-    if(recs.length) body += `<h3>Recommendation</h3><ol>${recs.map(r=>`<li>${esc(r)}</li>`).join('')}</ol>`;
-    body += `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;" border="1" cellpadding="6">
-      <tr><td><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
+    if(recs.length) body += `<h2 style="${RPT_S.h2}">Recommendation</h2><ol>${recs.map(r=>`<li style="${RPT_S.li}">${esc(r)}</li>`).join('')}</ol>`;
+    body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
+      <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
+    // Visit-specific print: feedback table only covers this visit's own findings.
+    issueRows = l.findings.map(f=>({ text: esc(f.text), photos: [] }));
   } else if(stage==='tc'){
-    body += `<h3>Testing &amp; Commissioning</h3>`;
+    body += `<h2 style="${RPT_S.h2}">Testing &amp; Commissioning</h2>`;
     body += baseTable;
-    body += `<p><strong>T&amp;C Date:</strong> ${fmtDate(p.tc.tarikh)}</p>`;
-    body += `<h3>Findings / Recommendation</h3><p>${esc(p.tc.dapatan)}</p>`;
-    body += `<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;" border="1" cellpadding="6">
-      <tr><td><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
+    body += `<p style="${RPT_S.p}"><strong>T&amp;C Date:</strong> ${fmtDate(p.tc.tarikh)}</p>`;
+    body += `<h2 style="${RPT_S.h2}">Findings / Recommendation</h2><p style="${RPT_S.p}">${esc(p.tc.dapatan)}</p>`;
+    body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
+      <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
+    issueRows = includeAll ? collectAllFindings(p) : [{ text: esc(p.tc.dapatan), photos: [] }];
   }
 
-  const issueRows = includeAll ? collectAllFindings(p) : (stage==='during' ? (p.duringLogs[visitIdx].findings||[]).map(f=>esc(f.text)) : []);
   if(issueRows.length){
-    body += `<h3 style="margin-top:20px;">Feedback Form</h3>
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px;" border="1" cellpadding="6">
-        <tr style="background:#f5ead0;"><td style="width:55%;"><strong>Issue</strong></td><td><strong>Feedback</strong></td></tr>
-        ${issueRows.map(r=>`<tr><td>${r}</td><td>&nbsp;</td></tr>`).join('')}
+    body += `<h2 style="${RPT_S.h2}">Feedback Form</h2>
+      <table style="${RPT_S.table}" border="1" cellpadding="6">
+        <tr><td style="${RPT_S.tdHead};width:55%;">Issue</td><td style="${RPT_S.tdHead}">Feedback</td></tr>
+        ${issueRows.map(r=>`<tr><td style="${RPT_S.td}">${r.text}${reportPhotosHtml(r.photos)}</td><td style="${RPT_S.td}">&nbsp;</td></tr>`).join('')}
       </table>`;
   }
+  body += `</div>`;
   return body;
 }
 function generateReport(mode){
