@@ -1190,9 +1190,11 @@ function renderDetail(main){
 
     <div class="card" style="padding:22px 24px;margin-bottom:18px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
-        <div><h2 style="margin:0 0 4px 0;font-size:21px;">${esc(p.wardUnit)}</h2></div>
+        <div>
+          <h2 style="margin:0 0 4px 0;font-size:21px;">${esc(p.wardUnit)}</h2>
+          <span class="pill ${STATUS_META[p.status].pill}">${STATUS_META[p.status].label}</span>
+        </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-outline btn-sm" onclick="printReport('${p.id}','pre')">Print Pre-Construction Report</button>
           <button class="btn-danger-ghost" onclick="deleteProjectUI('${p.id}')">Delete</button>
         </div>
       </div>
@@ -1220,7 +1222,10 @@ function renderDetail(main){
         <div class="card" style="padding:20px;margin-bottom:18px;">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
             <div class="section-title" style="margin:0;">Pre-Construction Information</div>
-            <button class="btn btn-outline btn-sm" onclick="editProject('${p.id}')">Edit</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn btn-outline btn-sm" onclick="editProject('${p.id}')">Edit</button>
+              <button class="btn btn-outline btn-sm" onclick="printReport('${p.id}','pre')">Print Report</button>
+            </div>
           </div>
           <div class="info-row"><span class="k">PIC In-Charge</span><span class="v">${esc((p.picInCharge||[]).join(', '))||'&mdash;'}</span></div>
           <div class="info-row"><span class="k">Contractor</span><span class="v">${esc(p.kontraktor)||'&mdash;'}</span></div>
@@ -1768,10 +1773,18 @@ function buildReportBody(mode){
     body += `<h2 style="${RPT_S.h2}">During Construction Assessment &ndash; Visit ${visitIdx+1}</h2>`;
     body += baseTable;
     body += `<p style="${RPT_S.p}"><strong>Visit Date:</strong> ${fmtDate(l.tarikh)}</p>`;
-    body += `<h2 style="${RPT_S.h2}">Findings</h2><ol>${l.findings.map(f=>{
-      const bits=[]; if(f.category) bits.push(esc(f.category)); if(f.location) bits.push(esc(f.location));
-      return `<li style="${RPT_S.li}">${bits.length?'<strong>['+bits.join(' &middot; ')+']</strong> ':''}${esc(f.text)}${reportPhotosHtml(f.photos, mode)}</li>`;
-    }).join('')}</ol>`;
+    body += `<h2 style="${RPT_S.h2}">Findings</h2>
+      <table style="${RPT_S.table}" border="1" cellpadding="6">
+        <tr><td style="${RPT_S.tdHead};width:6%;">No</td><td style="${RPT_S.tdHead};width:54%;">Finding</td><td style="${RPT_S.tdHead}">Photo</td></tr>
+        ${l.findings.map((f,i)=>{
+          const bits=[]; if(f.category) bits.push(esc(f.category)); if(f.location) bits.push(esc(f.location));
+          return `<tr>
+            <td style="${RPT_S.td};text-align:center;">${i+1}</td>
+            <td style="${RPT_S.td}">${bits.length?`<div style="font-size:9pt;color:#666;margin-bottom:3pt;">${bits.join(' &middot; ')}</div>`:''}${esc(f.text)}</td>
+            <td style="${RPT_S.td}">${reportPhotosHtml(f.photos, mode)}</td>
+          </tr>`;
+        }).join('')}
+      </table>`;
     const recs = visitRecommendations(l);
     if(recs.length) body += `<h2 style="${RPT_S.h2}">Recommendation</h2><ol>${recs.map(r=>`<li style="${RPT_S.li}">${esc(r)}</li>`).join('')}</ol>`;
     body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
