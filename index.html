@@ -136,12 +136,14 @@
   .toggle-btn.active{background:var(--orange-600);color:var(--brand-black);}
 
   .proj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;}
-  .proj-card{padding:16px 18px;cursor:pointer;border-left:4px solid var(--line);}
+  .proj-card{padding:0;cursor:pointer;display:flex;align-items:stretch;overflow:hidden;border-left:4px solid var(--line);}
   .proj-card.s-PRA{border-left-color:var(--stage-pra);}
-  .proj-card.s-DALAM{border-left-color:var(--stage-dalam);}
-  .proj-card.s-TC{border-left-color:var(--stage-tc);}
-  .proj-card.s-SELESAI{border-left-color:var(--stage-selesai);}
   .proj-card:hover{box-shadow:0 4px 18px rgba(23,20,15,0.12);}
+  .proj-tag{flex:0 0 26px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;letter-spacing:0.5px;writing-mode:vertical-rl;transform:rotate(180deg);padding:8px 0;}
+  .proj-tag.t-DALAM{background:var(--stage-dalam);}
+  .proj-tag.t-TC{background:var(--stage-tc);}
+  .proj-tag.t-SELESAI{background:var(--stage-selesai);}
+  .proj-body{padding:16px 18px;flex:1;min-width:0;}
   .proj-card h4{margin:0 0 3px 0;font-size:15px;}
   .proj-card .scope{font-size:12.5px;color:var(--ink-soft);margin:0 0 10px 0;line-height:1.4;}
   .proj-card .meta{font-size:11.5px;color:var(--ink-faint);}
@@ -213,6 +215,13 @@
     header.topbar{padding:14px 16px 0 16px;}
     main{padding:16px;}
     .stat-row{grid-template-columns:1fr 1fr;}
+    .info-row{flex-direction:column;align-items:flex-start;gap:2px;}
+    .info-row .v{text-align:left;word-break:break-word;}
+    .stage-track{flex-wrap:wrap;row-gap:14px;}
+    .stage-step{flex:1 1 44%;}
+    .stage-line{display:none;}
+    .stage-label{font-size:10px;}
+    .toggle-row .toggle-btn{flex:1 1 44%;font-size:12px;padding:8px 6px;}
   }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -507,6 +516,7 @@ let dashFilter = 'pending'; // 'pending' | 'all'
 let stageFilter = 'ALL'; // 'ALL' | 'PRA' | 'DALAM' | 'TC' — sub-filter within Pending
 let searchTerm = '';
 let currentId = null;
+let detailTab = 'all'; // 'all' | 'pre' | 'during' | 'tc' — which section to show on the project detail page
 let editingId = null;
 let formState = null;
 let duringDraft = null;
@@ -657,7 +667,7 @@ function auditorHtml(){
 function goView(v, id){
   view=v;
   if(v==='form' && id===undefined){ editingId=null; formState=blankForm(); newIcraStage='pre'; newIcraProjectId=null; duringDraft=null; }
-  if(v==='detail'){ currentId=id; }
+  if(v==='detail'){ currentId=id; detailTab='all'; }
   render();
   window.scrollTo({top:0,behavior:'instant'});
 }
@@ -790,18 +800,23 @@ function renderDashboard(main){
         <button class="btn btn-primary" onclick="goView('form')">+ Register New ICRA</button></div>
       ` : `
         <div class="proj-grid">
-          ${list.map(p=>`
+          ${list.map(p=>{
+            const tagText = { DALAM:'PENDING', TC:'T&amp;C', SELESAI:'COMPLETED' }[p.status];
+            return `
             <div class="card proj-card s-${p.status}" onclick="goView('detail','${p.id}')">
-              <h4>${esc(p.wardUnit)||'(No ward name)'}</h4>
-              <p class="scope">${esc(truncate(p.skopKerja,80))}</p>
-              <div class="meta">PIC: ${esc((p.picInCharge||[]).join(', '))||'&mdash;'}</div>
-              <div class="meta">Started: ${fmtDate(p.tarikhMula)} &middot; Visits: ${(p.duringLogs||[]).length}</div>
-              <div class="badges">
-                ${p.icraClass?`<span class="class-badge c-${p.icraClass}">Class ${p.icraClass}</span>`:''}
-                <span class="pill ${STATUS_META[p.status].pill}">${STATUS_META[p.status].label}</span>
+              ${tagText?`<div class="proj-tag t-${p.status}">${tagText}</div>`:''}
+              <div class="proj-body">
+                <h4>${esc(p.wardUnit)||'(No ward name)'}</h4>
+                <p class="scope">${esc(truncate(p.skopKerja,80))}</p>
+                <div class="meta">PIC: ${esc((p.picInCharge||[]).join(', '))||'&mdash;'}</div>
+                <div class="meta">Started: ${fmtDate(p.tarikhMula)} &middot; Visits: ${(p.duringLogs||[]).length}</div>
+                <div class="badges">
+                  ${p.icraClass?`<span class="class-badge c-${p.icraClass}">Class ${p.icraClass}</span>`:''}
+                  <span class="pill ${STATUS_META[p.status].pill}">${STATUS_META[p.status].label}</span>
+                </div>
               </div>
             </div>
-          `).join('')}
+          `;}).join('')}
         </div>
       `}
     </div>
@@ -1182,8 +1197,16 @@ function renderDetail(main){
       ${p.preSignedFile?`<div style="margin-top:6px;"><a class="attach-link" href="${p.preSignedFile.url}" target="_blank">&#128206; ${esc(p.preSignedFile.name)} (signed)</a></div>`:''}
     </div>
 
-    <div class="detail-grid">
+    <div class="toggle-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">
+      <button class="toggle-btn ${detailTab==='all'?'active':''}" onclick="detailTab='all';renderMain()">All</button>
+      <button class="toggle-btn ${detailTab==='pre'?'active':''}" onclick="detailTab='pre';renderMain()">Pre-Construction</button>
+      <button class="toggle-btn ${detailTab==='during'?'active':''}" onclick="detailTab='during';renderMain()">During Construction</button>
+      <button class="toggle-btn ${detailTab==='tc'?'active':''}" onclick="detailTab='tc';renderMain()">Testing &amp; Commissioning</button>
+    </div>
+
+    <div class="${detailTab==='all'?'detail-grid':''}">
       <div>
+        ${detailTab==='all'||detailTab==='pre'?`
         <div class="card" style="padding:20px;margin-bottom:18px;">
           <div class="section-title">Pre-Construction Information</div>
           <div class="info-row"><span class="k">PIC In-Charge</span><span class="v">${esc((p.picInCharge||[]).join(', '))||'&mdash;'}</span></div>
@@ -1214,8 +1237,9 @@ function renderDetail(main){
           ` : `
             <p class="section-sub" style="margin-top:6px;">Not yet classified${RISK_GROUPS[p.riskGroup]?' &mdash; Risk Group: '+RISK_GROUPS[p.riskGroup].title:''}. This looks like a project imported from the spreadsheet before the Activity Type/Class was captured digitally &mdash; press <strong>Edit</strong> above to complete it.</p>
           `}
-        </div>
+        </div>`:''}
 
+        ${detailTab==='all'||detailTab==='during'?`
         <div class="card" style="padding:20px;margin-bottom:18px;">
           <div class="section-title">During Construction Visits</div>
           ${(p.duringLogs||[]).length===0 ? `<p class="section-sub" style="margin-top:6px;">No visits logged yet.</p>` : (p.duringLogs||[]).map((l,idx)=>`
@@ -1243,14 +1267,16 @@ function renderDetail(main){
           `).join('')}
           <button class="btn btn-outline" onclick="startDuringDraft('${p.id}')">+ Add Construction Visit</button>
           <div id="during-draft-area"></div>
-        </div>
+        </div>`:''}
 
+        ${detailTab==='all'||detailTab==='tc'?`
         <div class="card" style="padding:20px;">
           <div class="section-title">Testing &amp; Commissioning</div>
           ${renderTCSection(p)}
-        </div>
+        </div>`:''}
       </div>
 
+      ${detailTab==='all'?`
       <div>
         <div class="card" style="padding:20px;">
           <div class="section-title">Permit Request By</div>
@@ -1267,7 +1293,24 @@ function renderDetail(main){
           <div class="info-row"><span class="k">Unit</span><span class="v">${esc(p.auth.unit)||'&mdash;'}</span></div>
           <div class="info-row"><span class="k">Date</span><span class="v">${fmtDate(p.auth.tarikh)}</span></div>
         </div>
-      </div>
+      </div>`:(detailTab==='pre'?`
+      <div>
+        <div class="card" style="padding:20px;">
+          <div class="section-title">Permit Request By</div>
+          <div class="info-row"><span class="k">Name</span><span class="v">${esc(p.permit.nama)||'&mdash;'}</span></div>
+          <div class="info-row"><span class="k">Position</span><span class="v">${esc(p.permit.jawatan)||'&mdash;'}</span></div>
+          <div class="info-row"><span class="k">Company/Unit</span><span class="v">${esc(p.permit.syarikat)||'&mdash;'}</span></div>
+          <div class="info-row"><span class="k">Contact</span><span class="v">${esc(p.permit.tel)||'&mdash;'}</span></div>
+          <div class="info-row"><span class="k">Date</span><span class="v">${fmtDate(p.permit.tarikh)}</span></div>
+        </div>
+        <div class="card" style="padding:20px;margin-top:18px;">
+          <div class="section-title">ICRA Authorized By</div>
+          <div class="info-row"><span class="k">Name</span><span class="v">${esc(p.auth.nama)||'&mdash;'}</span></div>
+          <div class="info-row"><span class="k">Position</span><span class="v">${esc(p.auth.jawatan)||'&mdash;'}</span></div>
+          <div class="info-row"><span class="k">Unit</span><span class="v">${esc(p.auth.unit)||'&mdash;'}</span></div>
+          <div class="info-row"><span class="k">Date</span><span class="v">${fmtDate(p.auth.tarikh)}</span></div>
+        </div>
+      </div>`:'')}
     </div>
   `;
 }
@@ -1435,6 +1478,12 @@ async function addTC(id){
 /* ---- shared: status update, delete, signed-file upload ---- */
 async function updateStatus(id, status){
   const p=findProject(id); if(!p) return;
+  if(status==='SELESAI' && p.status!=='SELESAI'){
+    if(!confirm('Mark this project as Completed? Make sure Pre-Construction, During Construction and Testing & Commissioning are all done first.')){
+      renderMain(); // revert the <select> back to the current status
+      return;
+    }
+  }
   p.status=status;
   try{ const saved=await apiSave(p); const idx=projects.findIndex(x=>x.id===saved.id); projects[idx]=saved; showToast('Project status updated.'); renderMain(); }
   catch(e){ showToast('Save failed: '+e.message); }
@@ -1631,17 +1680,26 @@ function addresseeLabel(){
 const RPT_FONT = "Calibri, Arial, sans-serif";
 const RPT_S = {
   h1: `font-family:${RPT_FONT};font-size:18pt;font-weight:700;margin:0 0 4pt 0;color:#17140F;`,
-  h2: `font-family:${RPT_FONT};font-size:13pt;font-weight:700;margin:14pt 0 4pt 0;color:#17140F;`,
+  h2: `font-family:${RPT_FONT};font-size:13pt;font-weight:700;margin:14pt 0 6pt 0;color:#B98A0A;text-decoration:underline;`,
   p:  `font-family:${RPT_FONT};font-size:11pt;margin:0 0 6pt 0;line-height:1.4;`,
   table: `font-family:${RPT_FONT};font-size:11pt;width:100%;border-collapse:collapse;margin-top:6pt;`,
   td: `border:1px solid #999;padding:6pt 8pt;font-family:${RPT_FONT};font-size:11pt;vertical-align:top;`,
   tdHead: `border:1px solid #999;padding:6pt 8pt;font-family:${RPT_FONT};font-size:11pt;background:#f5ead0;font-weight:700;`,
   li: `font-family:${RPT_FONT};font-size:11pt;margin-bottom:4pt;line-height:1.4;`,
-  photo: `width:110pt;max-height:85pt;object-fit:cover;border:1px solid #999;margin:4pt 6pt 0 0;`
+  photo: `width:110pt;max-height:85pt;object-fit:cover;border:1px solid #999;margin:4pt 6pt 0 0;`,
+  photoLink: `display:inline-block;margin:2pt 10pt 2pt 0;color:#B98A0A;font-weight:700;font-size:10pt;text-decoration:none;`
 };
-function reportPhotosHtml(photos){
+/* mode: 'pdf' renders real <img> (safe in a real browser print/canvas);
+   'word' renders a compact clickable link instead — Word's HTML-to-doc
+   converter ignores CSS width on <img> and blows photos up to native
+   pixel size (one photo per page), so a link is used there instead,
+   same pattern already proven reliable in the other UKI report tools. */
+function reportPhotosHtml(photos, mode){
   if(!photos || !photos.length) return '';
-  return `<div style="margin-top:4pt;">${photos.map(ph=>`<img src="${ph.thumb||ph.url}" style="${RPT_S.photo}" alt="finding photo">`).join('')}</div>`;
+  if(mode==='word'){
+    return `<div style="margin-top:4pt;">${photos.map((ph,i)=>`<a href="${ph.url||ph.thumb}" style="${RPT_S.photoLink}">&#128247; View photo ${photos.length>1?(i+1):''}</a>`).join('')}</div>`;
+  }
+  return `<div style="margin-top:4pt;">${photos.map(ph=>`<img src="${ph.thumb||ph.url}" width="110" height="85" style="${RPT_S.photo}" alt="finding photo">`).join('')}</div>`;
 }
 function collectAllFindings(p){
   const rows = [];
@@ -1657,12 +1715,14 @@ function collectAllFindings(p){
   if(p.tc && p.tc.dapatan) rows.push({ text: '[T&amp;C] ' + esc(p.tc.dapatan), photos: [] });
   return rows;
 }
-function buildReportBody(){
+function buildReportBody(mode){
+  mode = mode || 'pdf';
   const { id, stage, visitIdx, includeAll } = printCtx;
   const p = findProject(id); if(!p) return '';
   const hasClass = p.icraClass && CLASS_PRECAUTIONS[p.icraClass];
   let body = `<div style="font-family:${RPT_FONT};color:#17140F;">`;
-  body += `<h1 style="${RPT_S.h1}">ICRA &ndash; ${esc(p.wardUnit)}</h1><p style="${RPT_S.p}"><strong>Infection Control Unit, Hospital Tengku Permaisuri Norashikin</strong></p>`;
+  body += `<div style="text-align:center;margin-bottom:14pt;"><div style="${RPT_S.h1}">HOSPITAL TENGKU PERMAISURI NORASHIKIN (HTPN), KAJANG</div><div style="font-family:${RPT_FONT};font-size:13pt;font-weight:700;margin-top:2pt;color:#17140F;">ICRA &ndash; ${esc(p.wardUnit)}</div></div>`;
+  body += `<p style="${RPT_S.p}"><strong>Infection Control Unit, Hospital Tengku Permaisuri Norashikin</strong></p>`;
   body += `<p style="${RPT_S.p}"><strong>To:</strong> ${esc(addresseeLabel())}</p>`;
   const baseTable = `<table style="${RPT_S.table}" border="1" cellpadding="6">
     <tr><td style="${RPT_S.td}">Ward/Unit</td><td style="${RPT_S.td}" colspan="3">${esc(p.wardUnit)}</td></tr>
@@ -1691,7 +1751,7 @@ function buildReportBody(){
     body += `<p style="${RPT_S.p}"><strong>Visit Date:</strong> ${fmtDate(l.tarikh)}</p>`;
     body += `<h2 style="${RPT_S.h2}">Findings</h2><ol>${l.findings.map(f=>{
       const bits=[]; if(f.category) bits.push(esc(f.category)); if(f.location) bits.push(esc(f.location));
-      return `<li style="${RPT_S.li}">${bits.length?'<strong>['+bits.join(' &middot; ')+']</strong> ':''}${esc(f.text)}${reportPhotosHtml(f.photos)}</li>`;
+      return `<li style="${RPT_S.li}">${bits.length?'<strong>['+bits.join(' &middot; ')+']</strong> ':''}${esc(f.text)}${reportPhotosHtml(f.photos, mode)}</li>`;
     }).join('')}</ol>`;
     const recs = visitRecommendations(l);
     if(recs.length) body += `<h2 style="${RPT_S.h2}">Recommendation</h2><ol>${recs.map(r=>`<li style="${RPT_S.li}">${esc(r)}</li>`).join('')}</ol>`;
@@ -1713,14 +1773,14 @@ function buildReportBody(){
     body += `<h2 style="${RPT_S.h2}">Feedback Form</h2>
       <table style="${RPT_S.table}" border="1" cellpadding="6">
         <tr><td style="${RPT_S.tdHead};width:55%;">Issue</td><td style="${RPT_S.tdHead}">Feedback</td></tr>
-        ${issueRows.map(r=>`<tr><td style="${RPT_S.td}">${r.text}${reportPhotosHtml(r.photos)}</td><td style="${RPT_S.td}">&nbsp;</td></tr>`).join('')}
+        ${issueRows.map(r=>`<tr><td style="${RPT_S.td}">${r.text}${reportPhotosHtml(r.photos, mode)}</td><td style="${RPT_S.td}">&nbsp;</td></tr>`).join('')}
       </table>`;
   }
   body += `</div>`;
   return body;
 }
 function generateReport(mode){
-  const body = buildReportBody();
+  const body = buildReportBody(mode);
   if(!body) return;
   if(mode==='pdf'){
     const area = document.getElementById('printArea');
@@ -1762,7 +1822,7 @@ async function sendReportToContractorWhatsApp(){
   const origLabel = btn ? btn.innerHTML : '';
   if(btn){ btn.disabled = true; btn.innerHTML = 'Preparing PDF&hellip;'; }
   try{
-    const body = buildReportBody();
+    const body = buildReportBody('pdf');
     if(!body) throw new Error('Could not build report.');
     const wrapper = document.createElement('div');
     wrapper.style.cssText = 'padding:20px;font-family:Inter,sans-serif;background:#fff;';
@@ -1771,7 +1831,7 @@ async function sendReportToContractorWhatsApp(){
     const pdfBlob = await html2pdf().set({
       margin: 10,
       filename: 'report.pdf',
-      html2canvas: { scale: 2 },
+      html2canvas: { scale: 2, useCORS: true },
       jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
     }).from(wrapper).outputPdf('blob');
     document.body.removeChild(wrapper);
