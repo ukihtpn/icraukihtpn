@@ -216,6 +216,7 @@
     .stat-row{grid-template-columns:1fr 1fr;}
   }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -1614,6 +1615,11 @@ function renderPrintModal(){
           <button class="btn btn-outline" onclick="generateReport('word')">Save as Word</button>
           <button class="btn btn-primary" onclick="generateReport('pdf')">Print / Save as PDF</button>
         </div>
+        ${printCtx.addressee==='Contractor'?`
+        <div style="margin-top:14px;border-top:1px solid var(--line-strong);padding-top:14px;">
+          <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="sendReportToContractorWhatsApp()" id="wa-send-btn">&#128241; Send PDF to Contractor via WhatsApp</button>
+          <div class="field-hint" style="margin-top:6px;">Uploads the PDF, then opens WhatsApp with the link pre-filled so the contractor can view &amp; sign.</div>
+        </div>`:''}
       </div>
     </div>
   `;
@@ -1715,6 +1721,60 @@ function generateReport(mode){
   }
 }
 window.onafterprint = ()=> document.body.classList.remove('printing');
+
+function normalizePhoneForWhatsApp(tel){
+  let digits = String(tel||'').replace(/\D/g,'');
+  if(!digits) return '';
+  digits = digits.replace(/^0+/,'');
+  if(!digits.startsWith('60')) digits = '60' + digits;
+  return digits;
+}
+async function sendReportToContractorWhatsApp(){
+  if(!printCtx) return;
+  const p = findProject(printCtx.id); if(!p) return;
+  const phone = normalizePhoneForWhatsApp(p.kontraktorTel);
+  if(!phone){ showToast('Please add the contractor phone number first (Edit ICRA > Contractor Phone Number).'); return; }
+  if(typeof html2pdf === 'undefined'){ showToast('PDF library failed to load. Check your internet connection and try again.'); return; }
+  const btn = document.getElementById('wa-send-btn');
+  const origLabel = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled = true; btn.innerHTML = 'Preparing PDF&hellip;'; }
+  try{
+    const body = buildReportBody();
+    if(!body) throw new Error('Could not build report.');
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'padding:20px;font-family:Inter,sans-serif;background:#fff;';
+    wrapper.innerHTML = body;
+    document.body.appendChild(wrapper);
+    const pdfBlob = await html2pdf().set({
+      margin: 10,
+      filename: 'report.pdf',
+      html2canvas: { scale: 2 },
+      jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
+    }).from(wrapper).outputPdf('blob');
+    document.body.removeChild(wrapper);
+
+    const base64 = await new Promise((resolve,reject)=>{
+      const reader = new FileReader();
+      reader.onload = ()=> resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(pdfBlob);
+    });
+    const fname = `ICRA_${(p.wardUnit||'Report').replace(/[^a-z0-9]+/gi,'_')}_${todayISO()}.pdf`;
+    const res = await apiUploadFile(fname, 'application/pdf', base64);
+    if(!res || !res.url) throw new Error('Upload failed');
+
+    const stageLabel = printCtx.stage==='pre'?'Pre-Construction':printCtx.stage==='during'?'During Construction':'Testing & Commissioning';
+    const msg = `ICRA Report - ${p.wardUnit}\n${stageLabel} Assessment\n\nPlease review and sign:\n${res.url}\n\n- Unit Kawalan Infeksi (UKI), HTPN`;
+    const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    window.open(waUrl, '_blank');
+    closePrintModal();
+    showToast('PDF uploaded — opening WhatsApp.');
+  }catch(e){
+    showToast('Could not send: ' + e.message);
+  }finally{
+    if(btn){ btn.disabled = false; btn.innerHTML = origLabel; }
+  }
+}
 
 /* ============================================================
    INIT
