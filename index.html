@@ -532,6 +532,16 @@ function uid(){ return 'p_' + Date.now().toString(36) + Math.random().toString(3
 function esc(s){ return (s===undefined||s===null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtDate(iso){ if(!iso) return '&mdash;'; const d=new Date(iso+'T00:00:00'); if(isNaN(d)) return esc(iso); return d.getDate()+' '+MONTHS_EN[d.getMonth()]+' '+d.getFullYear(); }
 function truncate(s,n){ s=s||''; return s.length>n? s.slice(0,n-1)+'&hellip;' : s; }
+/* Small preview chip for an uploaded file (memo, gantt chart, signed copy, etc.)
+   Shows a thumbnail (Drive generates one for images and PDFs alike) when
+   available, otherwise just the filename link. */
+function fileChipHtml(file){
+  if(!file) return '';
+  return `<a href="${file.url}" target="_blank" style="display:flex;align-items:center;gap:8px;margin-top:4px;text-decoration:none;">
+    ${file.thumb?`<img src="${file.thumb}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line-strong);flex-shrink:0;">`:''}
+    <span class="attach-link">&#128206; ${esc(file.name)}</span>
+  </a>`;
+}
 function blankForm(){
   return {
     id:null, wardUnit:'', location:'',
@@ -556,6 +566,13 @@ function selectAuditor(name){
   currentAuditor = name;
   saveCurrentAuditor();
   view = 'dashboard';
+  render();
+}
+function logoutAuditor(){
+  if(!confirm('Log out of ICRA HTPN on this device?')) return;
+  currentAuditor = null;
+  saveCurrentAuditor();
+  view = 'auditor';
   render();
 }
 function getMatrixOptions(riskGroup, activityType){ if(!riskGroup||!activityType) return null; return MATRIX[riskGroup][activityType]; }
@@ -617,9 +634,8 @@ function render(){
           <p>Infection Control Unit &middot; Renovation &amp; Construction Audit</p></div>
         </div>
         <div class="header-right">
-          <div class="share-note">${ICON.lock}<span>${config.gasUrl?'Shared Google Sheet database':'Shared with everyone using this link'}</span></div>
           <button class="gear-btn" title="Switch auditor" onclick="goView('auditor')">&#128100; ${esc(currentAuditor||'Auditor')}</button>
-          <button class="gear-btn" title="Connect to Google Sheets" onclick="goView('setup')">&#9881;</button>
+          <button class="gear-btn" title="Log out" onclick="logoutAuditor()">&#128682;</button>
         </div>
       </div>
       <nav class="tabs">${tabs.map(([id,label])=>`<button class="tab-btn ${view===id?'active':''}" onclick="goView('${id}')">${label}</button>`).join('')}</nav>
@@ -929,12 +945,12 @@ function preFormHtml(){
 
       <div class="field"><label class="field-label">Memo Panggilan (Call Memo) &mdash; image or PDF</label>
         <input type="file" accept="image/*,application/pdf" onchange="handleMemoUpload(this)">
-        <div class="upload-row" id="memo-status">${f.memoFile?`<a class="attach-link" href="${f.memoFile.url}" target="_blank">&#128206; ${esc(f.memoFile.name)}</a>`:''}</div>
+        <div class="upload-row" id="memo-status">${f.memoFile?fileChipHtml(f.memoFile):''}</div>
       </div>
 
       <div class="field"><label class="field-label">Project Schedule / Chart &mdash; image or PDF (auto-estimates duration)</label>
         <input type="file" accept="image/*,application/pdf" onchange="handleGanttUpload(this)">
-        <div class="upload-row" id="gantt-status">${f.ganttFile?`<a class="attach-link" href="${f.ganttFile.url}" target="_blank">&#128206; ${esc(f.ganttFile.name)}</a>`:''}</div>
+        <div class="upload-row" id="gantt-status">${f.ganttFile?fileChipHtml(f.ganttFile):''}</div>
       </div>
 
       <div class="field"><label class="field-label">Construction Scope (Task Description)</label>
@@ -1070,8 +1086,8 @@ async function handleMemoUpload(input){
   try{
     const base64 = await fileToBase64(file);
     const res = await apiUploadFile(file.name, file.type, base64);
-    formState.memoFile = {name:file.name, url:res.url};
-    document.getElementById('memo-status').innerHTML = `<a class="attach-link" href="${res.url}" target="_blank">&#128206; ${esc(file.name)}</a>`;
+    formState.memoFile = {name:file.name, url:res.url, thumb:res.thumb||''};
+    document.getElementById('memo-status').innerHTML = fileChipHtml(formState.memoFile);
   }catch(e){ showToast('Upload failed: '+e.message); document.getElementById('memo-status').innerHTML=''; }
 }
 async function handleGanttUpload(input){
@@ -1080,8 +1096,8 @@ async function handleGanttUpload(input){
   try{
     const base64 = await fileToBase64(file);
     const res = await apiUploadFile(file.name, file.type, base64);
-    formState.ganttFile = {name:file.name, url:res.url};
-    document.getElementById('gantt-status').innerHTML = `<a class="attach-link" href="${res.url}" target="_blank">&#128206; ${esc(file.name)}</a>`;
+    formState.ganttFile = {name:file.name, url:res.url, thumb:res.thumb||''};
+    document.getElementById('gantt-status').innerHTML = fileChipHtml(formState.ganttFile);
     try{
       const duration = await callClaudeVision(base64, file.type, 'This image or document shows a construction/renovation project schedule or Gantt chart. Read it and give the total estimated project duration from start to finish as a short phrase (e.g. "3 weeks" or "10 days"). Respond with ONLY the duration phrase, nothing else.');
       if(duration){ formState.anggaranTempoh = duration; document.getElementById('duration-input').value = duration; showToast('Estimated duration filled from schedule — please verify.'); }
@@ -1176,7 +1192,6 @@ function renderDetail(main){
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
         <div><h2 style="margin:0 0 4px 0;font-size:21px;">${esc(p.wardUnit)}</h2></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-outline btn-sm" onclick="editProject('${p.id}')">Edit</button>
           <button class="btn btn-outline btn-sm" onclick="printReport('${p.id}','pre')">Print Pre-Construction Report</button>
           <button class="btn-danger-ghost" onclick="deleteProjectUI('${p.id}')">Delete</button>
         </div>
@@ -1187,14 +1202,9 @@ function renderDetail(main){
           <div class="stage-line"></div><div class="stage-dot">${i<curIdx?'&#10003;':i+1}</div>
           <div class="stage-label">${STATUS_META[s].label}</div></div>`).join('')}
       </div>
-      <label class="field-label">Project Status</label>
-      <select onchange="updateStatus('${p.id}', this.value)">
-        ${stageOrder.map(s=>`<option value="${s}" ${p.status===s?'selected':''}>${STATUS_META[s].label}</option>`).join('')}
-      </select>
-
-      <div class="field-hint">Upload the signed Pre-Construction permit (after printing &amp; obtaining signatures):</div>
-      <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','pre')">
-      ${p.preSignedFile?`<div style="margin-top:6px;"><a class="attach-link" href="${p.preSignedFile.url}" target="_blank">&#128206; ${esc(p.preSignedFile.name)} (signed)</a></div>`:''}
+      ${p.status==='SELESAI'
+        ? `<span class="pill pill-selesai">&#10003; Completed</span>`
+        : (p.status==='TC' ? `<button class="btn btn-outline btn-sm" onclick="markCompleted('${p.id}')">Mark Project as Completed</button>` : '')}
     </div>
 
     <div class="toggle-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">
@@ -1208,7 +1218,10 @@ function renderDetail(main){
       <div>
         ${detailTab==='all'||detailTab==='pre'?`
         <div class="card" style="padding:20px;margin-bottom:18px;">
-          <div class="section-title">Pre-Construction Information</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div class="section-title" style="margin:0;">Pre-Construction Information</div>
+            <button class="btn btn-outline btn-sm" onclick="editProject('${p.id}')">Edit</button>
+          </div>
           <div class="info-row"><span class="k">PIC In-Charge</span><span class="v">${esc((p.picInCharge||[]).join(', '))||'&mdash;'}</span></div>
           <div class="info-row"><span class="k">Contractor</span><span class="v">${esc(p.kontraktor)||'&mdash;'}</span></div>
           <div class="info-row"><span class="k">Contractor Phone</span><span class="v">${esc(p.kontraktorTel)||'&mdash;'}</span></div>
@@ -1217,10 +1230,13 @@ function renderDetail(main){
           <div class="info-row"><span class="k">Start Date</span><span class="v">${fmtDate(p.tarikhMula)}</span></div>
           <div class="info-row"><span class="k">Finish Date</span><span class="v">${fmtDate(p.tarikhTamat)}</span></div>
           <div class="info-row"><span class="k">Estimated Duration</span><span class="v">${esc(p.anggaranTempoh)||'&mdash;'}</span></div>
-          ${p.memoFile?`<div class="info-row"><span class="k">Memo</span><span class="v"><a class="attach-link" href="${p.memoFile.url}" target="_blank">${esc(p.memoFile.name)}</a></span></div>`:''}
-          ${p.ganttFile?`<div class="info-row"><span class="k">Schedule/Chart</span><span class="v"><a class="attach-link" href="${p.ganttFile.url}" target="_blank">${esc(p.ganttFile.name)}</a></span></div>`:''}
+          ${p.memoFile?`<div style="margin-top:10px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Memo</div>${fileChipHtml(p.memoFile)}</div>`:''}
+          ${p.ganttFile?`<div style="margin-top:10px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Schedule/Chart</div>${fileChipHtml(p.ganttFile)}</div>`:''}
           <div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Job Scope</div><div style="font-size:13.5px;line-height:1.6;">${esc(p.skopKerja)}</div></div>
           ${p.additionalRecommendation?`<div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Additional Recommendation</div><div style="font-size:13.5px;line-height:1.6;">${esc(p.additionalRecommendation)}</div></div>`:''}
+          <div class="field-hint" style="margin-top:14px;">Upload the signed Pre-Construction permit (after printing &amp; obtaining signatures):</div>
+          <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','pre')">
+          ${p.preSignedFile?`<div style="margin-top:6px;">${fileChipHtml(Object.assign({},p.preSignedFile,{name:p.preSignedFile.name+' (signed)'}))}</div>`:''}
         </div>
 
         <div class="card" style="padding:20px;margin-bottom:18px;">
@@ -1262,7 +1278,7 @@ function renderDetail(main){
                 <ol style="margin:4px 0 0 0;padding-left:18px;">${visitRecommendations(l).map(r=>`<li>${esc(r)}</li>`).join('')}</ol></div>` : ''}
               <div class="field-hint" style="margin-top:8px;">Upload signed copy (contractor acknowledgement):</div>
               <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','during',${idx})">
-              ${l.signedFile?`<div style="margin-top:6px;"><a class="attach-link" href="${l.signedFile.url}" target="_blank">&#128206; ${esc(l.signedFile.name)} (signed)</a></div>`:''}
+              ${l.signedFile?`<div style="margin-top:6px;">${fileChipHtml(Object.assign({},l.signedFile,{name:l.signedFile.name+' (signed)'}))}</div>`:''}
             </div>
           `).join('')}
           <button class="btn btn-outline" onclick="startDuringDraft('${p.id}')">+ Add Construction Visit</button>
@@ -1443,7 +1459,7 @@ function renderTCSection(p){
       </div>
       <div class="field-hint" style="margin-top:10px;">Upload signed T&amp;C form:</div>
       <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','tc')">
-      ${p.tc.signedFile?`<div style="margin-top:6px;"><a class="attach-link" href="${p.tc.signedFile.url}" target="_blank">&#128206; ${esc(p.tc.signedFile.name)} (signed)</a></div>`:''}
+      ${p.tc.signedFile?`<div style="margin-top:6px;">${fileChipHtml(Object.assign({},p.tc.signedFile,{name:p.tc.signedFile.name+' (signed)'}))}</div>`:''}
     `;
   }
   return `
@@ -1476,16 +1492,11 @@ async function addTC(id){
 }
 
 /* ---- shared: status update, delete, signed-file upload ---- */
-async function updateStatus(id, status){
+async function markCompleted(id){
   const p=findProject(id); if(!p) return;
-  if(status==='SELESAI' && p.status!=='SELESAI'){
-    if(!confirm('Mark this project as Completed? Make sure Pre-Construction, During Construction and Testing & Commissioning are all done first.')){
-      renderMain(); // revert the <select> back to the current status
-      return;
-    }
-  }
-  p.status=status;
-  try{ const saved=await apiSave(p); const idx=projects.findIndex(x=>x.id===saved.id); projects[idx]=saved; showToast('Project status updated.'); renderMain(); }
+  if(!confirm('Mark this project as Completed? Make sure Pre-Construction, During Construction and Testing & Commissioning are all done first.')) return;
+  p.status='SELESAI';
+  try{ const saved=await apiSave(p); const idx=projects.findIndex(x=>x.id===saved.id); projects[idx]=saved; showToast('Project marked as completed.'); renderMain(); }
   catch(e){ showToast('Save failed: '+e.message); }
 }
 async function deleteProjectUI(id){
@@ -1499,7 +1510,7 @@ async function handleSignedUpload(input, pid, stage, visitIdx){
   try{
     const base64 = await fileToBase64(file);
     const res = await apiUploadFile(file.name, file.type, base64);
-    const fileRef = {name:file.name, url:res.url};
+    const fileRef = {name:file.name, url:res.url, thumb:res.thumb||''};
     if(stage==='pre') p.preSignedFile = fileRef;
     else if(stage==='tc') p.tc.signedFile = fileRef;
     else if(stage==='during') p.duringLogs[visitIdx].signedFile = fileRef;
@@ -1697,7 +1708,15 @@ const RPT_S = {
 function reportPhotosHtml(photos, mode){
   if(!photos || !photos.length) return '';
   if(mode==='word'){
-    return `<div style="margin-top:4pt;">${photos.map((ph,i)=>`<a href="${ph.url||ph.thumb}" style="${RPT_S.photoLink}">&#128247; View photo ${photos.length>1?(i+1):''}</a>`).join('')}</div>`;
+    // Word's HTML-to-doc converter ignores CSS width on <img> and blows
+    // photos up to native pixel size, BUT it does honour plain HTML
+    // width/height attributes (no unit) — so size the image that way,
+    // and still keep a "View full photo" link as a backup.
+    return `<div style="margin-top:4pt;">${photos.map((ph,i)=>`
+      <span style="display:inline-block;margin:0 8pt 8pt 0;vertical-align:top;">
+        <img src="${ph.thumb||ph.url}" width="110" height="85" style="border:1px solid #999;" alt="finding photo"><br>
+        <a href="${ph.url||ph.thumb}" style="${RPT_S.photoLink}font-size:8.5pt;">&#128247; Full size${photos.length>1?' '+(i+1):''}</a>
+      </span>`).join('')}</div>`;
   }
   return `<div style="margin-top:4pt;">${photos.map(ph=>`<img src="${ph.thumb||ph.url}" width="110" height="85" style="${RPT_S.photo}" alt="finding photo">`).join('')}</div>`;
 }
