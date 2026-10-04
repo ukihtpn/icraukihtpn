@@ -498,6 +498,16 @@ const FINDING_CATEGORIES = [
   'Hand Hygiene / PPE',
   'Other'
 ];
+const PRE_ICRA_RECOMMENDATION_PRESETS = [
+  'Seal HVAC/ducting and air vents before work begins',
+  'Install dust barrier / containment (plastic sheeting, negative pressure if required)',
+  'Provide appropriate PPE for all workers',
+  'Schedule noisy/dusty work outside patient care hours where possible',
+  'Clean and disinfect work area daily and upon completion',
+  'Remove debris via covered containers, not through patient care areas',
+  'Erect signage indicating construction zone',
+  'Ensure fire/emergency exits remain unobstructed throughout works'
+];
 const STATUS_META = {
   PRA:{label:'Pre-Construction', pill:'pill-pra'},
   DALAM:{label:'During Construction', pill:'pill-dalam'},
@@ -520,6 +530,7 @@ let detailTab = 'all'; // 'all' | 'pre' | 'during' | 'tc' — which section to s
 let editingId = null;
 let formState = null;
 let duringDraft = null;
+let tcDraft = null;
 let newIcraStage = 'pre';
 let newIcraProjectId = null;
 let currentAuditor = null;
@@ -547,10 +558,30 @@ function blankForm(){
     id:null, wardUnit:'', location:'',
     picInCharge: currentAuditor ? [currentAuditor] : [], tarikhPraKonsultasi:'', tarikhICRA:todayISO(),
     tarikhMula:'', tarikhTamat:'', anggaranTempoh:'', kontraktor:'', kontraktorTel:'',
-    skopKerja:'', memoFile:null, ganttFile:null,
+    skopKerjaSummary:'', skopKerjaItems:[''], memoFile:null, ganttFile:null,
     activityType:null, riskGroup:null, icraClass:null,
-    additionalRecommendation:''
+    additionalRecommendation:'',
+    preIcraPhotos:[], preIcraRecommendations:['']
   };
+}
+/* Job Scope has two parts: skopKerjaSummary is a short overall description
+   (e.g. "Kerja-kerja pembaikan Klinik Penjagaan Luka") — this is what goes
+   into the main Excel row so that column stays short and readable.
+   skopKerjaItems is the optional detailed task-by-task breakdown — this is
+   treated as Pre-Construction findings (its own list, synced to the
+   Findings tab) rather than crammed into the main Job Scope cell.
+   skopKerja (old plain string field) is kept in sync with skopKerjaSummary
+   for backward compatibility with any code/reports that still read it. */
+function skopKerjaToItems(text){
+  if(!text) return [''];
+  const lines = String(text).split('\n').map(l=>l.replace(/^\s*\d+\.\s*/,'').trim()).filter(Boolean);
+  return lines.length ? lines : [String(text)];
+}
+function plainListHtml(items, styleLi, styleOl){
+  const clean = (items||[]).filter(t=>t && String(t).trim());
+  if(clean.length===0) return '';
+  if(clean.length===1) return `<div style="${styleLi||''}">${esc(clean[0])}</div>`;
+  return `<ol style="${styleOl||'margin:4px 0 0 0;padding-left:18px;'}">${clean.map(t=>`<li style="${styleLi||''}">${esc(t)}</li>`).join('')}</ol>`;
 }
 
 /* ---- current auditor (stored locally on this device/browser) ---- */
@@ -953,13 +984,40 @@ function preFormHtml(){
         <div class="upload-row" id="gantt-status">${f.ganttFile?fileChipHtml(f.ganttFile):''}</div>
       </div>
 
-      <div class="field"><label class="field-label">Construction Scope (Task Description)</label>
-        <textarea id="scope-textarea" oninput="formState.skopKerja=this.value" placeholder="Describe the construction/renovation job scope&hellip;">${esc(f.skopKerja)}</textarea>
-        <div class="upload-row">
-          <label style="font-size:12.5px;color:var(--ink-soft);">or scan from a photo:</label>
-          <input type="file" accept="image/*,application/pdf" style="max-width:220px;" onchange="handleScopeScan(this)">
+      <div class="field"><label class="field-label">Job Scope (short description)</label>
+        <input type="text" value="${esc(f.skopKerjaSummary)}" oninput="formState.skopKerjaSummary=this.value" placeholder="e.g. Kerja-kerja pembaikan Klinik Penjagaan Luka">
+        <div class="field-hint">Keep this short &mdash; it's what shows in the Excel/Sheet export. Use "Detailed Task Breakdown" below for a longer list of individual tasks.</div>
+      </div>
+
+      <div class="field" style="margin-top:14px;">
+        <label class="field-label">Detailed Task Breakdown (optional)</label>
+        <div class="field-hint" style="margin-top:-2px;margin-bottom:6px;">Each task here is recorded as a Pre-Construction finding &mdash; it will NOT be dumped into the main Job Scope column in Excel.</div>
+        <div id="scope-items-list">${scopeItemsHtml()}</div>
+        <button class="btn btn-outline btn-sm" onclick="addScopeItem()">+ Add Task</button>
+        <div class="upload-row" style="margin-top:10px;">
+          <label style="font-size:12.5px;color:var(--ink-soft);">or scan from a photo (adds as a new task):</label>
+          <input type="file" accept="image/*,application/pdf" style="max-width:260px;" onchange="handleScopeScan(this)">
         </div>
         <div id="scope-status" class="upload-status"></div>
+      </div>
+
+      <div class="field" style="margin-top:18px;">
+        <label class="field-label">Pre-ICRA Photos (optional)</label>
+        <div class="field-hint" style="margin-top:-2px;margin-bottom:6px;">Attach site photos taken during the Pre-ICRA visit, if any.</div>
+        <input type="file" accept="image/*" multiple onchange="handlePreIcraPhotos(this)">
+        <div class="photo-thumb-row" id="pre-icra-photos-row">${preIcraPhotosHtml()}</div>
+      </div>
+
+      <div class="field" style="margin-top:14px;">
+        <label class="field-label">Pre-ICRA Recommendation (optional)</label>
+        <div style="margin-bottom:8px;">
+          <select onchange="applyPreIcraPreset(this)">
+            <option value="">&mdash; Pick a common recommendation to add &mdash;</option>
+            ${PRE_ICRA_RECOMMENDATION_PRESETS.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')}
+          </select>
+        </div>
+        <div id="pre-icra-recs-list">${preIcraRecommendationsHtml()}</div>
+        <button class="btn btn-outline btn-sm" onclick="addPreIcraRecommendation()">+ Add Recommendation</button>
       </div>
     </div>
 
@@ -1104,6 +1162,56 @@ async function handleGanttUpload(input){
     }catch(err){ showToast('Uploaded, but could not auto-read duration. Please fill it in manually.'); }
   }catch(e){ showToast('Upload failed: '+e.message); document.getElementById('gantt-status').innerHTML=''; }
 }
+function scopeItemsHtml(){
+  const items = formState.skopKerjaItems;
+  return items.map((t,i)=>`
+    <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;">
+      <span style="padding-top:8px;font-size:12.5px;color:var(--ink-faint);">${i+1}.</span>
+      <textarea style="flex:1;" oninput="formState.skopKerjaItems[${i}]=this.value" placeholder="Describe this task&hellip;">${esc(t)}</textarea>
+      ${items.length>1?`<button type="button" class="btn-ghost btn btn-sm" onclick="removeScopeItem(${i})">&times;</button>`:''}
+    </div>
+  `).join('');
+}
+function addScopeItem(){ formState.skopKerjaItems.push(''); document.getElementById('scope-items-list').innerHTML = scopeItemsHtml(); }
+function removeScopeItem(i){ formState.skopKerjaItems.splice(i,1); if(formState.skopKerjaItems.length===0) formState.skopKerjaItems.push(''); document.getElementById('scope-items-list').innerHTML = scopeItemsHtml(); }
+
+function preIcraPhotosHtml(){
+  return (formState.preIcraPhotos||[]).map((ph,pi)=>`<span style="position:relative;display:inline-block;"><img class="photo-thumb" src="${ph.thumb}" alt=""><button type="button" onclick="removePreIcraPhoto(${pi})" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;line-height:1;cursor:pointer;">&times;</button></span>`).join('');
+}
+function removePreIcraPhoto(pi){ formState.preIcraPhotos.splice(pi,1); document.getElementById('pre-icra-photos-row').innerHTML = preIcraPhotosHtml(); }
+async function handlePreIcraPhotos(input){
+  const files = Array.from(input.files||[]);
+  for(const file of files){
+    try{
+      const base64 = await fileToBase64(file);
+      const res = await apiUploadFile(file.name, file.type, base64);
+      formState.preIcraPhotos.push({name:file.name, url:res.url, thumb:res.thumb});
+    }catch(e){ showToast('Photo upload failed: '+e.message); }
+  }
+  document.getElementById('pre-icra-photos-row').innerHTML = preIcraPhotosHtml();
+}
+
+function preIcraRecommendationsHtml(){
+  const recs = formState.preIcraRecommendations;
+  return recs.map((r,i)=>`
+    <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;">
+      <span style="padding-top:8px;font-size:12.5px;color:var(--ink-faint);">${i+1}.</span>
+      <textarea style="flex:1;" oninput="formState.preIcraRecommendations[${i}]=this.value" placeholder="Recommendation ${i+1}&hellip;">${esc(r)}</textarea>
+      ${recs.length>1?`<button type="button" class="btn-ghost btn btn-sm" onclick="removePreIcraRecommendation(${i})">&times;</button>`:''}
+    </div>
+  `).join('');
+}
+function addPreIcraRecommendation(){ formState.preIcraRecommendations.push(''); document.getElementById('pre-icra-recs-list').innerHTML = preIcraRecommendationsHtml(); }
+function removePreIcraRecommendation(i){ formState.preIcraRecommendations.splice(i,1); if(formState.preIcraRecommendations.length===0) formState.preIcraRecommendations.push(''); document.getElementById('pre-icra-recs-list').innerHTML = preIcraRecommendationsHtml(); }
+function applyPreIcraPreset(select){
+  const val = select.value; if(!val) return;
+  const recs = formState.preIcraRecommendations;
+  if(recs.length===1 && !recs[0].trim()) recs[0] = val;
+  else recs.push(val);
+  select.value='';
+  document.getElementById('pre-icra-recs-list').innerHTML = preIcraRecommendationsHtml();
+}
+
 async function handleScopeScan(input){
   const file = input.files[0]; if(!file) return;
   document.getElementById('scope-status').textContent = 'Reading photo\u2026';
@@ -1111,8 +1219,9 @@ async function handleScopeScan(input){
     const base64 = await fileToBase64(file);
     const text = await callClaudeVision(base64, file.type, 'This image shows a description of a construction/renovation task or work order for a hospital. Transcribe or summarize the task description in 2-4 clear sentences suitable for an infection control risk assessment form. Respond with ONLY the description text.');
     if(text){
-      formState.skopKerja = text;
-      document.getElementById('scope-textarea').value = text;
+      if(formState.skopKerjaItems.length===1 && !formState.skopKerjaItems[0].trim()) formState.skopKerjaItems[0] = text;
+      else formState.skopKerjaItems.push(text);
+      document.getElementById('scope-items-list').innerHTML = scopeItemsHtml();
       document.getElementById('scope-status').textContent = 'Filled from photo — please review.';
     } else {
       document.getElementById('scope-status').textContent = 'Could not read the photo. Please type it manually.';
@@ -1122,9 +1231,11 @@ async function handleScopeScan(input){
 
 async function submitForm(){
   const f = formState;
-  if(!f.wardUnit || !f.skopKerja){ showToast('Please select a Location and fill in the Job Scope.'); return; }
+  if(!f.wardUnit || !f.skopKerjaSummary || !f.skopKerjaSummary.trim()){ showToast('Please select a Location and fill in the Job Scope.'); return; }
   if(!f.activityType || !f.riskGroup || !f.icraClass){ showToast('Please complete Activity Type, Risk Group and ICRA Class.'); return; }
 
+  const preIcraRecs = (f.preIcraRecommendations||[]).filter(r=>r && r.trim());
+  const skopKerjaItemsClean = (f.skopKerjaItems||[]).filter(t=>t && t.trim());
   let record;
   const autoPermit = { nama:f.kontraktor, jawatan:'Contractor', syarikat:f.kontraktor, tel:f.kontraktorTel||'', tarikh:f.tarikhICRA };
   const autoAuth = { nama:(f.picInCharge||[]).join(', '), jawatan:'PIC UKI', unit:'Unit Kawalan Infeksi', tarikh:f.tarikhICRA };
@@ -1134,9 +1245,12 @@ async function submitForm(){
       wardUnit:f.wardUnit, location:f.location,
       picInCharge:f.picInCharge, tarikhPraKonsultasi:f.tarikhPraKonsultasi, tarikhICRA:f.tarikhICRA,
       tarikhMula:f.tarikhMula, tarikhTamat:f.tarikhTamat, anggaranTempoh:f.anggaranTempoh,
-      kontraktor:f.kontraktor, kontraktorTel:f.kontraktorTel, skopKerja:f.skopKerja, memoFile:f.memoFile, ganttFile:f.ganttFile,
+      kontraktor:f.kontraktor, kontraktorTel:f.kontraktorTel,
+      skopKerjaSummary:f.skopKerjaSummary.trim(), skopKerja:f.skopKerjaSummary.trim(), skopKerjaItems:skopKerjaItemsClean,
+      memoFile:f.memoFile, ganttFile:f.ganttFile,
       activityType:f.activityType, riskGroup:f.riskGroup, icraClass:f.icraClass,
       additionalRecommendation:f.additionalRecommendation,
+      preIcraPhotos:f.preIcraPhotos||[], preIcraRecommendations:preIcraRecs,
       permit:autoPermit, auth:autoAuth
     });
   } else {
@@ -1145,9 +1259,12 @@ async function submitForm(){
       wardUnit:f.wardUnit, location:f.location,
       picInCharge:f.picInCharge, tarikhPraKonsultasi:f.tarikhPraKonsultasi, tarikhICRA:f.tarikhICRA,
       tarikhMula:f.tarikhMula, tarikhTamat:f.tarikhTamat, anggaranTempoh:f.anggaranTempoh,
-      kontraktor:f.kontraktor, kontraktorTel:f.kontraktorTel, skopKerja:f.skopKerja, memoFile:f.memoFile, ganttFile:f.ganttFile,
+      kontraktor:f.kontraktor, kontraktorTel:f.kontraktorTel,
+      skopKerjaSummary:f.skopKerjaSummary.trim(), skopKerja:f.skopKerjaSummary.trim(), skopKerjaItems:skopKerjaItemsClean,
+      memoFile:f.memoFile, ganttFile:f.ganttFile,
       activityType:f.activityType, riskGroup:f.riskGroup, icraClass:f.icraClass,
       additionalRecommendation:f.additionalRecommendation,
+      preIcraPhotos:f.preIcraPhotos||[], preIcraRecommendations:preIcraRecs,
       permit:autoPermit, auth:autoAuth,
       preSignedFile:null,
       duringLogs:[], tcExpectedDate:'', tc:null
@@ -1169,9 +1286,14 @@ function editProject(id){
     wardUnit:p.wardUnit, location:p.location,
     picInCharge:(p.picInCharge||[]).slice(), tarikhPraKonsultasi:p.tarikhPraKonsultasi, tarikhICRA:p.tarikhICRA,
     tarikhMula:p.tarikhMula, tarikhTamat:p.tarikhTamat, anggaranTempoh:p.anggaranTempoh,
-    kontraktor:p.kontraktor, kontraktorTel:p.kontraktorTel||'', skopKerja:p.skopKerja, memoFile:p.memoFile, ganttFile:p.ganttFile,
+    kontraktor:p.kontraktor, kontraktorTel:p.kontraktorTel||'',
+    skopKerjaSummary: p.skopKerjaSummary || (p.skopKerjaItems && p.skopKerjaItems.length ? (p.skopKerja||'') : (skopKerjaToItems(p.skopKerja).length<=1 ? (p.skopKerja||'') : '')),
+    skopKerjaItems: (p.skopKerjaItems && p.skopKerjaItems.length) ? p.skopKerjaItems.slice() : (skopKerjaToItems(p.skopKerja).length>1 ? skopKerjaToItems(p.skopKerja) : ['']),
+    memoFile:p.memoFile, ganttFile:p.ganttFile,
     activityType:p.activityType, riskGroup:p.riskGroup, icraClass:p.icraClass,
-    additionalRecommendation:p.additionalRecommendation||''
+    additionalRecommendation:p.additionalRecommendation||'',
+    preIcraPhotos:(p.preIcraPhotos||[]).map(ph=>({...ph})),
+    preIcraRecommendations:(()=>{ const r=(p.preIcraRecommendations||[]).slice(); return r.length?r:['']; })()
   };
   view='form'; render();
 }
@@ -1237,7 +1359,10 @@ function renderDetail(main){
           <div class="info-row"><span class="k">Estimated Duration</span><span class="v">${esc(p.anggaranTempoh)||'&mdash;'}</span></div>
           ${p.memoFile?`<div style="margin-top:10px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Memo</div>${fileChipHtml(p.memoFile)}</div>`:''}
           ${p.ganttFile?`<div style="margin-top:10px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Schedule/Chart</div>${fileChipHtml(p.ganttFile)}</div>`:''}
-          <div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Job Scope</div><div style="font-size:13.5px;line-height:1.6;">${esc(p.skopKerja)}</div></div>
+          <div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Job Scope</div><div style="font-size:13.5px;line-height:1.6;">${esc(p.skopKerjaSummary||p.skopKerja)||'&mdash;'}</div></div>
+          ${(p.skopKerjaItems||[]).filter(t=>t&&t.trim()).length?`<div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Pre-Construction Findings (Detailed Task Breakdown)</div>${plainListHtml(p.skopKerjaItems, 'font-size:13.5px;line-height:1.6;')}</div>`:''}
+          ${(p.preIcraPhotos||[]).length?`<div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Pre-ICRA Photos</div><div class="photo-thumb-row">${(p.preIcraPhotos||[]).map(ph=>`<a href="${ph.url}" target="_blank"><img class="photo-thumb" src="${ph.thumb}" alt=""></a>`).join('')}</div></div>`:''}
+          ${(p.preIcraRecommendations||[]).length?`<div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Pre-ICRA Recommendation</div><ol style="margin:4px 0 0 0;padding-left:18px;font-size:13.5px;line-height:1.6;">${(p.preIcraRecommendations||[]).map(r=>`<li>${esc(r)}</li>`).join('')}</ol></div>`:''}
           ${p.additionalRecommendation?`<div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Additional Recommendation</div><div style="font-size:13.5px;line-height:1.6;">${esc(p.additionalRecommendation)}</div></div>`:''}
           <div class="field-hint" style="margin-top:14px;">Upload the signed Pre-Construction permit (after printing &amp; obtaining signatures):</div>
           <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','pre')">
@@ -1277,6 +1402,8 @@ function renderDetail(main){
                   ${fnd.category||fnd.location?`<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:2px;">${fnd.category?`<span class="pill" style="background:var(--orange-100);color:var(--orange-800);">${esc(fnd.category)}</span>`:''}${fnd.location?' &middot; '+esc(fnd.location):''}</div>`:''}
                   <div>${esc(fnd.text)}</div>
                   <div class="photo-thumb-row">${(fnd.photos||[]).map(ph=>`<a href="${ph.url}" target="_blank"><img class="photo-thumb" src="${ph.thumb}" alt="finding photo"></a>`).join('')}</div>
+                  ${fnd.recommendation?`<div style="margin-top:4px;font-size:12.5px;"><strong>Cadangan:</strong> ${esc(fnd.recommendation)}</div>`:''}
+                  ${fnd.actionBy?`<div style="font-size:12.5px;color:var(--ink-soft);"><strong>Tindakan:</strong> ${esc(fnd.actionBy)}</div>`:''}
                 </div>
               `).join('')}
               ${visitRecommendations(l).length ? `<div style="margin-top:8px;font-size:13px;"><strong>Recommendation:</strong>
@@ -1294,6 +1421,7 @@ function renderDetail(main){
         <div class="card" style="padding:20px;">
           <div class="section-title">Testing &amp; Commissioning</div>
           ${renderTCSection(p)}
+          <div id="tc-draft-area"></div>
         </div>`:''}
       </div>
 
@@ -1344,7 +1472,7 @@ function visitRecommendations(l){
   return [];
 }
 function startDuringDraft(pid){
-  duringDraft = { pid, editingVisitId:null, tarikh:todayISO(), findings:[{location:'',category:'',text:'',photos:[]}], recommendations:[''] };
+  duringDraft = { pid, editingVisitId:null, tarikh:todayISO(), findings:[{location:'',category:'',text:'',photos:[],recommendation:'',actionBy:''}], recommendations:[''] };
   renderDuringDraft();
 }
 function startEditDuringVisit(pid, visitId){
@@ -1352,10 +1480,10 @@ function startEditDuringVisit(pid, visitId){
   const l = (p.duringLogs||[]).find(v=>v.id===visitId); if(!l) return;
   duringDraft = {
     pid, editingVisitId: visitId, tarikh: l.tarikh,
-    findings: (l.findings||[]).map(f=>({ location:f.location||'', category:f.category||'', text:f.text||'', photos:(f.photos||[]).map(ph=>({...ph})) })),
+    findings: (l.findings||[]).map(f=>({ location:f.location||'', category:f.category||'', text:f.text||'', photos:(f.photos||[]).map(ph=>({...ph})), recommendation:f.recommendation||'', actionBy:f.actionBy||'' })),
     recommendations: (()=>{ const r = visitRecommendations(l); return r.length ? r.slice() : ['']; })()
   };
-  if(duringDraft.findings.length===0) duringDraft.findings.push({location:'',category:'',text:'',photos:[]});
+  if(duringDraft.findings.length===0) duringDraft.findings.push({location:'',category:'',text:'',photos:[],recommendation:'',actionBy:''});
   renderDuringDraft();
   const area = document.getElementById('during-draft-area');
   if(area) area.scrollIntoView({behavior:'smooth', block:'start'});
@@ -1398,9 +1526,13 @@ function duringDraftFindingsHtml(){
       <textarea oninput="duringDraft.findings[${i}].text=this.value" placeholder="Describe the finding&hellip;">${esc(fnd.text)}</textarea>
       <input type="file" accept="image/*,application/pdf" multiple onchange="handleFindingPhotos(this,${i})">
       <div class="photo-thumb-row" id="finding-photos-${i}">${fnd.photos.map((ph,pi)=>`<span style="position:relative;display:inline-block;"><img class="photo-thumb" src="${ph.thumb}" alt=""><button type="button" onclick="removeFindingPhoto(${i},${pi})" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;line-height:1;cursor:pointer;">&times;</button></span>`).join('')}</div>
+      <label class="field-label" style="margin-top:8px;">Cadangan / Recommendation for this finding</label>
+      <div class="field"><textarea oninput="duringDraft.findings[${i}].recommendation=this.value" placeholder="Recommendation specific to this finding&hellip;">${esc(fnd.recommendation)}</textarea></div>
+      <label class="field-label">Tindakan / Action By</label>
+      <div class="field"><input type="text" list="action-by-options" value="${esc(fnd.actionBy)}" oninput="duringDraft.findings[${i}].actionBy=this.value" placeholder="e.g. Kontraktor / Radicare / User"></div>
       ${duringDraft.findings.length>1?`<button class="btn-ghost btn btn-sm" onclick="removeDuringFinding(${i})">Remove finding</button>`:''}
     </div>
-  `).join('');
+  `).join('') + `<datalist id="action-by-options"><option value="Kontraktor"><option value="Radicare"><option value="User"><option value="Kejuruteraan"><option value="Unit Kawalan Infeksi (UKI)"></datalist>`;
 }
 function duringDraftRecommendationsHtml(){
   return duringDraft.recommendations.map((r,i)=>`
@@ -1411,7 +1543,7 @@ function duringDraftRecommendationsHtml(){
     </div>
   `).join('');
 }
-function addDuringFinding(){ duringDraft.findings.push({location:'',category:'',text:'',photos:[]}); renderDuringDraft(); }
+function addDuringFinding(){ duringDraft.findings.push({location:'',category:'',text:'',photos:[],recommendation:'',actionBy:''}); renderDuringDraft(); }
 function removeDuringFinding(i){ duringDraft.findings.splice(i,1); renderDuringDraft(); }
 function addDuringRecommendation(){ duringDraft.recommendations.push(''); renderDuringDraft(); }
 function removeDuringRecommendation(i){ duringDraft.recommendations.splice(i,1); renderDuringDraft(); }
@@ -1431,7 +1563,7 @@ async function saveDuringDraft(){
   const p = findProject(duringDraft.pid); if(!p) return;
   const hasText = duringDraft.findings.some(f=>f.text.trim());
   if(!hasText){ showToast('Please add at least one finding.'); return; }
-  const findings = duringDraft.findings.filter(f=>f.text.trim()).map(f=>({ location:f.location||'', category:f.category||'', text:f.text, photos:f.photos||[] }));
+  const findings = duringDraft.findings.filter(f=>f.text.trim()).map(f=>({ location:f.location||'', category:f.category||'', text:f.text, photos:f.photos||[], recommendation:f.recommendation||'', actionBy:f.actionBy||'' }));
   const recommendations = duringDraft.recommendations.filter(r=>r && r.trim());
   p.duringLogs = p.duringLogs || [];
   if(duringDraft.editingVisitId){
@@ -1453,13 +1585,32 @@ async function saveDuringDraft(){
   }catch(e){ showToast('Save failed: '+e.message); }
 }
 
-/* ---- Testing & Commissioning ---- */
+/* ---- Testing & Commissioning: same structure as During Construction —
+   multiple findings, each with photos (optional), its own recommendation
+   and "Tindakan / Action By". Backward-compatible with the old single
+   p.tc.dapatan string from earlier versions. ---- */
+function tcFindings(p){
+  if(!p || !p.tc) return [];
+  if(Array.isArray(p.tc.findings)) return p.tc.findings;
+  if(p.tc.dapatan) return [{location:'',category:'',text:p.tc.dapatan,photos:[],recommendation:'',actionBy:''}];
+  return [];
+}
 function renderTCSection(p){
   if(p.tc){
+    const findings = tcFindings(p);
     return `
       <div class="info-row"><span class="k">T&amp;C Date</span><span class="v">${fmtDate(p.tc.tarikh)}</span></div>
-      <div style="margin-top:10px;font-size:13.5px;line-height:1.6;">${esc(p.tc.dapatan)}</div>
-      <div style="margin-top:10px;">
+      ${findings.map(fnd=>`
+        <div style="margin-top:8px;font-size:13px;">
+          ${fnd.category||fnd.location?`<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:2px;">${fnd.category?`<span class="pill" style="background:var(--orange-100);color:var(--orange-800);">${esc(fnd.category)}</span>`:''}${fnd.location?' &middot; '+esc(fnd.location):''}</div>`:''}
+          <div>${esc(fnd.text)}</div>
+          <div class="photo-thumb-row">${(fnd.photos||[]).map(ph=>`<a href="${ph.url}" target="_blank"><img class="photo-thumb" src="${ph.thumb}" alt="finding photo"></a>`).join('')}</div>
+          ${fnd.recommendation?`<div style="margin-top:4px;font-size:12.5px;"><strong>Cadangan:</strong> ${esc(fnd.recommendation)}</div>`:''}
+          ${fnd.actionBy?`<div style="font-size:12.5px;color:var(--ink-soft);"><strong>Tindakan:</strong> ${esc(fnd.actionBy)}</div>`:''}
+        </div>
+      `).join('')}
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-outline btn-sm" onclick="startEditTCDraft('${p.id}')">Edit</button>
         <button class="btn btn-outline btn-sm" onclick="printReport('${p.id}','tc')">Print T&amp;C Report</button>
       </div>
       <div class="field-hint" style="margin-top:10px;">Upload signed T&amp;C form:</div>
@@ -1471,11 +1622,7 @@ function renderTCSection(p){
     <p class="section-sub" style="margin-top:6px;">Not yet recorded.</p>
     <label class="field-label">Expected T&amp;C Date</label>
     <div class="field"><input type="date" id="tc-expected-${p.id}" value="${p.tcExpectedDate||todayISO()}" onchange="setTCExpected('${p.id}',this.value)"></div>
-    <label class="field-label">Actual T&amp;C Date</label>
-    <div class="field"><input type="date" id="tc-tarikh-${p.id}" value="${todayISO()}"></div>
-    <label class="field-label">Findings / Recommendation</label>
-    <div class="field"><textarea id="tc-dapatan-${p.id}" placeholder="Findings &amp; recommendations during testing &amp; commissioning&hellip;"></textarea></div>
-    <button class="btn btn-outline" onclick="addTC('${p.id}')">Save T&amp;C Record</button>
+    <button class="btn btn-outline" onclick="startTCDraft('${p.id}')">+ Add T&amp;C Record</button>
   `;
 }
 async function setTCExpected(id,val){
@@ -1483,15 +1630,87 @@ async function setTCExpected(id,val){
   p.tcExpectedDate = val;
   try{ const saved=await apiSave(p); const idx=projects.findIndex(x=>x.id===saved.id); projects[idx]=saved; }catch(e){ showToast('Save failed: '+e.message); }
 }
-async function addTC(id){
-  const p = findProject(id); if(!p) return;
-  const tarikh = document.getElementById('tc-tarikh-'+id).value;
-  const dapatan = document.getElementById('tc-dapatan-'+id).value.trim();
-  if(!dapatan){ showToast('Please fill in the T&C findings/recommendation.'); return; }
-  p.tc = {tarikh, dapatan, signedFile:null};
+function startTCDraft(pid){
+  tcDraft = { pid, tarikh:todayISO(), findings:[{location:'',category:'',text:'',photos:[],recommendation:'',actionBy:''}] };
+  renderTCDraft();
+  const area = document.getElementById('tc-draft-area');
+  if(area) area.scrollIntoView({behavior:'smooth', block:'start'});
+}
+function startEditTCDraft(pid){
+  const p = findProject(pid); if(!p || !p.tc) return;
+  const existing = tcFindings(p);
+  tcDraft = {
+    pid, tarikh: p.tc.tarikh || todayISO(),
+    findings: existing.length ? existing.map(f=>({ location:f.location||'', category:f.category||'', text:f.text||'', photos:(f.photos||[]).map(ph=>({...ph})), recommendation:f.recommendation||'', actionBy:f.actionBy||'' })) : [{location:'',category:'',text:'',photos:[],recommendation:'',actionBy:''}]
+  };
+  renderTCDraft();
+  const area = document.getElementById('tc-draft-area');
+  if(area) area.scrollIntoView({behavior:'smooth', block:'start'});
+}
+function renderTCDraft(){
+  const el = document.getElementById('tc-draft-area');
+  if(!el) return;
+  if(!tcDraft){ el.innerHTML=''; return; }
+  el.innerHTML = `
+    <div class="visit-card" style="margin-top:12px;background:var(--orange-50);">
+      <strong style="font-size:13px;color:var(--orange-800);">Testing &amp; Commissioning Findings</strong>
+      <label class="field-label" style="margin-top:8px;">T&amp;C Date</label>
+      <div class="field"><input type="date" value="${tcDraft.tarikh}" oninput="tcDraft.tarikh=this.value"></div>
+      <div id="tc-findings-list">${tcDraftFindingsHtml()}</div>
+      <button class="btn btn-outline btn-sm" onclick="addTCFinding()">+ Add Another Finding</button>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-outline" onclick="tcDraft=null; renderTCDraft()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTCDraft()">Save T&amp;C Record</button>
+      </div>
+    </div>
+  `;
+}
+function tcDraftFindingsHtml(){
+  return tcDraft.findings.map((fnd,i)=>`
+    <div class="finding-block">
+      <label class="field-label">Finding ${i+1}</label>
+      <div class="field"><input type="text" value="${esc(fnd.location)}" oninput="tcDraft.findings[${i}].location=this.value" placeholder="Location (e.g. Ward 3B, near aircond vent)"></div>
+      <div class="field">
+        <select onchange="tcDraft.findings[${i}].category=this.value">
+          <option value="">&mdash; Select category &mdash;</option>
+          ${FINDING_CATEGORIES.map(c=>`<option value="${esc(c)}" ${fnd.category===c?'selected':''}>${esc(c)}</option>`).join('')}
+        </select>
+      </div>
+      <textarea oninput="tcDraft.findings[${i}].text=this.value" placeholder="Describe the finding&hellip;">${esc(fnd.text)}</textarea>
+      <input type="file" accept="image/*,application/pdf" multiple onchange="handleTCFindingPhotos(this,${i})">
+      <div class="photo-thumb-row" id="tc-finding-photos-${i}">${fnd.photos.map((ph,pi)=>`<span style="position:relative;display:inline-block;"><img class="photo-thumb" src="${ph.thumb}" alt=""><button type="button" onclick="removeTCFindingPhoto(${i},${pi})" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;line-height:1;cursor:pointer;">&times;</button></span>`).join('')}</div>
+      <label class="field-label" style="margin-top:8px;">Cadangan / Recommendation for this finding</label>
+      <div class="field"><textarea oninput="tcDraft.findings[${i}].recommendation=this.value" placeholder="Recommendation specific to this finding&hellip;">${esc(fnd.recommendation)}</textarea></div>
+      <label class="field-label">Tindakan / Action By</label>
+      <div class="field"><input type="text" list="action-by-options" value="${esc(fnd.actionBy)}" oninput="tcDraft.findings[${i}].actionBy=this.value" placeholder="e.g. Kontraktor / Radicare / User"></div>
+      ${tcDraft.findings.length>1?`<button class="btn-ghost btn btn-sm" onclick="removeTCFinding(${i})">Remove finding</button>`:''}
+    </div>
+  `).join('') + `<datalist id="action-by-options"><option value="Kontraktor"><option value="Radicare"><option value="User"><option value="Kejuruteraan"><option value="Unit Kawalan Infeksi (UKI)"></datalist>`;
+}
+function addTCFinding(){ tcDraft.findings.push({location:'',category:'',text:'',photos:[],recommendation:'',actionBy:''}); renderTCDraft(); }
+function removeTCFinding(i){ tcDraft.findings.splice(i,1); renderTCDraft(); }
+function removeTCFindingPhoto(i,pi){ tcDraft.findings[i].photos.splice(pi,1); renderTCDraft(); }
+async function handleTCFindingPhotos(input, i){
+  const files = Array.from(input.files||[]);
+  for(const file of files){
+    try{
+      const base64 = await fileToBase64(file);
+      const res = await apiUploadFile(file.name, file.type, base64);
+      tcDraft.findings[i].photos.push({name:file.name, url:res.url, thumb:res.thumb});
+    }catch(e){ showToast('Photo upload failed: '+e.message); }
+  }
+  renderTCDraft();
+}
+async function saveTCDraft(){
+  const p = findProject(tcDraft.pid); if(!p) return;
+  const hasText = tcDraft.findings.some(f=>f.text.trim());
+  if(!hasText){ showToast('Please add at least one finding.'); return; }
+  const findings = tcDraft.findings.filter(f=>f.text.trim()).map(f=>({ location:f.location||'', category:f.category||'', text:f.text, photos:f.photos||[], recommendation:f.recommendation||'', actionBy:f.actionBy||'' }));
+  p.tc = { tarikh:tcDraft.tarikh, findings, signedFile: (p.tc && p.tc.signedFile) || null };
   p.status='TC';
   try{
     const saved = await apiSave(p); const idx=projects.findIndex(x=>x.id===saved.id); projects[idx]=saved;
+    tcDraft=null;
     showToast('T&C record saved.'); goView('detail', saved.id);
   }catch(e){ showToast('Save failed: '+e.message); }
 }
@@ -1655,7 +1874,7 @@ let printCtx = null;
 const ADDRESSEE_OPTIONS = ['Pembangunan','User','Contractor','Others'];
 function printReport(id, stage, visitIdx){
   const p = findProject(id); if(!p) return;
-  printCtx = { id, stage, visitIdx, addressee:'Pembangunan', addresseeOther:'', includeAll:false };
+  printCtx = { id, stage, visitIdx, addressee:'Pembangunan', addresseeOther:'', includeAll:false, reportStyle:'form', reviewerName:'', reviewerTitle:'Ketua Unit Kawalan Infeksi' };
   renderPrintModal();
 }
 function closePrintModal(){ printCtx=null; document.getElementById('printModalRoot').innerHTML=''; }
@@ -1666,6 +1885,16 @@ function renderPrintModal(){
     <div class="modal-backdrop" onclick="if(event.target===this) closePrintModal();">
       <div class="modal-box">
         <h3>Print Report</h3>
+        ${printCtx.stage==='during'?`
+        <p class="field-hint">Report format</p>
+        <label class="radio-row"><input type="radio" name="reportStyle" value="form" ${printCtx.reportStyle==='form'?'checked':''} onchange="printCtx.reportStyle='form';renderPrintModal()"> Form &mdash; for contractor to sign (acknowledgement)</label>
+        <label class="radio-row"><input type="radio" name="reportStyle" value="laporan" ${printCtx.reportStyle==='laporan'?'checked':''} onchange="printCtx.reportStyle='laporan';renderPrintModal()"> Laporan &mdash; Penemuan / Cadangan / Tindakan report</label>
+        ${printCtx.reportStyle==='laporan'?`
+        <div class="field" style="margin-top:8px;"><label class="field-label">Laporan disemak oleh (reviewer name)</label>
+          <input type="text" value="${esc(printCtx.reviewerName)}" oninput="printCtx.reviewerName=this.value" placeholder="e.g. DR NOR ZAILA BINTI ZAIDAN"></div>
+        <div class="field"><label class="field-label">Reviewer title</label>
+          <input type="text" value="${esc(printCtx.reviewerTitle)}" oninput="printCtx.reviewerTitle=this.value"></div>`:''}
+        <div style="border-top:1px solid var(--line-strong);margin:10px 0;"></div>`:''}
         <p class="field-hint">Who is this report addressed to?</p>
         ${ADDRESSEE_OPTIONS.map(o=>`
           <label class="radio-row"><input type="radio" name="addressee" value="${o}" ${printCtx.addressee===o?'checked':''} onchange="printCtx.addressee='${o}'"> ${o}</label>
@@ -1736,8 +1965,59 @@ function collectAllFindings(p){
       rows.push({ text: prefix + esc(f.text), photos: f.photos||[] });
     });
   });
-  if(p.tc && p.tc.dapatan) rows.push({ text: '[T&amp;C] ' + esc(p.tc.dapatan), photos: [] });
+  tcFindings(p).forEach(f=>{
+    const bits = []; if(f.category) bits.push(f.category); if(f.location) bits.push(f.location);
+    const prefix = bits.length ? `[T&amp;C &middot; ${esc(bits.join(' &middot; '))}] ` : `[T&amp;C] `;
+    rows.push({ text: prefix + esc(f.text), photos: f.photos||[] });
+  });
   return rows;
+}
+/* ---- Rumusan / Summary: auto-generated from existing findings data ---- */
+function gatherSummaryFindings(p, stage, visitIdx, includeAll){
+  const items = [];
+  if(stage==='during'){
+    const visits = includeAll ? (p.duringLogs||[]) : [p.duringLogs[visitIdx]];
+    visits.forEach(l=>{ (l.findings||[]).forEach(f=>{ if(f.text) items.push({category:f.category||'Other', text:f.text}); }); });
+  } else if(stage==='tc'){
+    if(includeAll){
+      (p.duringLogs||[]).forEach(l=>{ (l.findings||[]).forEach(f=>{ if(f.text) items.push({category:f.category||'Other', text:f.text}); }); });
+    }
+    tcFindings(p).forEach(f=>{ if(f.text) items.push({category:f.category||'Testing & Commissioning', text:f.text}); });
+  } else if(stage==='pre' && includeAll){
+    (p.duringLogs||[]).forEach(l=>{ (l.findings||[]).forEach(f=>{ if(f.text) items.push({category:f.category||'Other', text:f.text}); }); });
+    tcFindings(p).forEach(f=>{ if(f.text) items.push({category:f.category||'Testing & Commissioning', text:f.text}); });
+  }
+  return items;
+}
+function buildSummaryHtml(p, items){
+  if(!items.length) return '';
+  const counts = {};
+  items.forEach(it=>{ const c = it.category||'Other'; counts[c] = (counts[c]||0)+1; });
+  const sortedCats = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  const total = items.length;
+  const riskLabel = RISK_GROUPS[p.riskGroup] ? RISK_GROUPS[p.riskGroup].title : '';
+  const classLabel = p.icraClass ? ('Class '+p.icraClass) : '';
+  const statusLabel = STATUS_META[p.status] ? STATUS_META[p.status].label : p.status;
+
+  let narrative = `A total of <strong>${total}</strong> finding${total!==1?'s':''} ${total!==1?'were':'was'} identified`;
+  if(sortedCats.length){
+    narrative += `, with the most frequent issue${sortedCats[0][1]>1?'s':''} relating to <strong>${esc(sortedCats[0][0])}</strong> (${sortedCats[0][1]} of ${total})`;
+  }
+  narrative += '.';
+  if(classLabel || riskLabel){
+    narrative += ` This project is classified as <strong>${esc(classLabel||'Not yet classified')}</strong>${riskLabel?' with risk group <strong>'+esc(riskLabel)+'</strong>':''}.`;
+  }
+  narrative += ` Current project status: <strong>${esc(statusLabel)}</strong>.`;
+
+  return `
+    <div style="border:2px solid #B98A0A;border-radius:10px;padding:14pt 16pt;margin:16pt 0;">
+      <div style="${RPT_S.h2};margin-top:0;">Rumusan / Summary of Findings</div>
+      <p style="${RPT_S.p}">${narrative}</p>
+      <table style="${RPT_S.table}" border="1" cellpadding="6">
+        <tr><td style="${RPT_S.tdHead}">Category</td><td style="${RPT_S.tdHead};width:22%;">No. of Findings</td></tr>
+        ${sortedCats.map(([c,n])=>`<tr><td style="${RPT_S.td}">${esc(c)}</td><td style="${RPT_S.td};text-align:center;">${n}</td></tr>`).join('')}
+      </table>
+    </div>`;
 }
 function buildReportBody(mode){
   mode = mode || 'pdf';
@@ -1752,13 +2032,22 @@ function buildReportBody(mode){
     <tr><td style="${RPT_S.td}">Ward/Unit</td><td style="${RPT_S.td}" colspan="3">${esc(p.wardUnit)}</td></tr>
     <tr><td style="${RPT_S.td}">PIC In-Charge</td><td style="${RPT_S.td}">${esc((p.picInCharge||[]).join(', '))}</td><td style="${RPT_S.td}">Contractor</td><td style="${RPT_S.td}">${esc(p.kontraktor)}${p.kontraktorTel?' ('+esc(p.kontraktorTel)+')':''}</td></tr>
     <tr><td style="${RPT_S.td}">ICRA Class</td><td style="${RPT_S.td}" colspan="3"><strong>${hasClass?'Class '+p.icraClass:'Not yet classified'}</strong>${p.activityType?' (Activity '+p.activityType+')':''}${RISK_GROUPS[p.riskGroup]?' &middot; '+RISK_GROUPS[p.riskGroup].title:''}</td></tr>
-    <tr><td style="${RPT_S.td}">Job Scope</td><td style="${RPT_S.td}" colspan="3">${esc(p.skopKerja)}</td></tr>
+    <tr><td style="${RPT_S.td}">Job Scope</td><td style="${RPT_S.td}" colspan="3">${esc(p.skopKerjaSummary||p.skopKerja)||'&mdash;'}</td></tr>
   </table>`;
 
   let issueRows = []; // {text, photos}
 
   if(stage==='pre'){
     body += baseTable;
+    if((p.skopKerjaItems||[]).filter(t=>t&&t.trim()).length){
+      body += `<h2 style="${RPT_S.h2}">Detailed Task Breakdown</h2>${plainListHtml(p.skopKerjaItems, 'font-size:11pt;line-height:1.4;')}`;
+    }
+    if((p.preIcraPhotos||[]).length){
+      body += `<h2 style="${RPT_S.h2}">Pre-ICRA Photos</h2>${reportPhotosHtml(p.preIcraPhotos, mode)}`;
+    }
+    if((p.preIcraRecommendations||[]).length){
+      body += `<h2 style="${RPT_S.h2}">Pre-ICRA Recommendation</h2><ol>${p.preIcraRecommendations.map(r=>`<li style="${RPT_S.li}">${esc(r)}</li>`).join('')}</ol>`;
+    }
     if(hasClass){
       body += `<h2 style="${RPT_S.h2}">During Construction</h2><ul>${CLASS_PRECAUTIONS[p.icraClass].during.map(x=>`<li style="${RPT_S.li}">${x}</li>`).join('')}</ul>`;
       body += `<h2 style="${RPT_S.h2}">Upon Completion</h2><ul>${CLASS_PRECAUTIONS[p.icraClass].completion.map(x=>`<li style="${RPT_S.li}">${x}</li>`).join('')}</ul>`;
@@ -1770,6 +2059,9 @@ function buildReportBody(mode){
     if(includeAll) issueRows = collectAllFindings(p);
   } else if(stage==='during'){
     const l = p.duringLogs[visitIdx];
+    if(printCtx.reportStyle==='laporan'){
+      return buildLaporanDuringBody(p, l, visitIdx, mode);
+    }
     body += `<h2 style="${RPT_S.h2}">During Construction Assessment &ndash; Visit ${visitIdx+1}</h2>`;
     body += baseTable;
     body += `<p style="${RPT_S.p}"><strong>Visit Date:</strong> ${fmtDate(l.tarikh)}</p>`;
@@ -1792,14 +2084,30 @@ function buildReportBody(mode){
     // Visit-specific print: feedback table only covers this visit's own findings.
     issueRows = l.findings.map(f=>({ text: esc(f.text), photos: [] }));
   } else if(stage==='tc'){
+    const findings = tcFindings(p);
     body += `<h2 style="${RPT_S.h2}">Testing &amp; Commissioning</h2>`;
     body += baseTable;
     body += `<p style="${RPT_S.p}"><strong>T&amp;C Date:</strong> ${fmtDate(p.tc.tarikh)}</p>`;
-    body += `<h2 style="${RPT_S.h2}">Findings / Recommendation</h2><p style="${RPT_S.p}">${esc(p.tc.dapatan)}</p>`;
+    body += `<h2 style="${RPT_S.h2}">Findings</h2>
+      <table style="${RPT_S.table}" border="1" cellpadding="6">
+        <tr><td style="${RPT_S.tdHead};width:6%;">No</td><td style="${RPT_S.tdHead};width:40%;">Finding</td><td style="${RPT_S.tdHead};width:28%;">Photo</td><td style="${RPT_S.tdHead}">Cadangan / Tindakan</td></tr>
+        ${findings.map((f,i)=>{
+          const bits=[]; if(f.category) bits.push(esc(f.category)); if(f.location) bits.push(esc(f.location));
+          return `<tr>
+            <td style="${RPT_S.td};text-align:center;">${i+1}</td>
+            <td style="${RPT_S.td}">${bits.length?`<div style="font-size:9pt;color:#666;margin-bottom:3pt;">${bits.join(' &middot; ')}</div>`:''}${esc(f.text)}</td>
+            <td style="${RPT_S.td}">${reportPhotosHtml(f.photos, mode)}</td>
+            <td style="${RPT_S.td}">${f.recommendation?esc(f.recommendation):''}${f.actionBy?`<div style="margin-top:4pt;"><strong>Tindakan: ${esc(f.actionBy)}</strong></div>`:''}</td>
+          </tr>`;
+        }).join('')}
+      </table>`;
     body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
       <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
-    issueRows = includeAll ? collectAllFindings(p) : [{ text: esc(p.tc.dapatan), photos: [] }];
+    issueRows = includeAll ? collectAllFindings(p) : findings.map(f=>({ text: esc(f.text), photos: [] }));
   }
+
+  const summaryItems = gatherSummaryFindings(p, stage, visitIdx, includeAll);
+  body += buildSummaryHtml(p, summaryItems);
 
   if(issueRows.length){
     body += `<h2 style="${RPT_S.h2}">Feedback Form</h2>
@@ -1808,6 +2116,57 @@ function buildReportBody(mode){
         ${issueRows.map(r=>`<tr><td style="${RPT_S.td}">${r.text}${reportPhotosHtml(r.photos, mode)}</td><td style="${RPT_S.td}">&nbsp;</td></tr>`).join('')}
       </table>`;
   }
+  body += `</div>`;
+  return body;
+}
+/* ---- "Laporan" style for During Construction: narrative report matching
+   UKI's existing report format (PENEMUAN / CADANGAN table with Tindakan,
+   Rumusan paragraph, prepared-by / reviewed-by signature blocks) — an
+   alternative to the signature "Form" style above, for when the report
+   itself (not a form the contractor signs) is what's needed. ---- */
+function buildLaporanDuringBody(p, l, visitIdx, mode){
+  const hasClass = p.icraClass && CLASS_PRECAUTIONS[p.icraClass];
+  const findings = l.findings||[];
+  const picLine = [(p.picInCharge||[]).join(', ') ? (p.picInCharge||[]).join(', ')+' (Unit Kawalan Infeksi)' : '', p.kontraktor?`Kontraktor: ${p.kontraktor}${p.kontraktorTel?' ('+p.kontraktorTel+')':''}`:''].filter(Boolean).join(' | ');
+  let body = `<div style="font-family:${RPT_FONT};color:#17140F;">`;
+  body += `<div style="text-align:center;margin-bottom:4pt;">
+    <div style="${RPT_S.h1}">HOSPITAL TENGKU PERMAISURI NORASHIKIN (HTPN), KAJANG</div>
+    <div style="font-family:${RPT_FONT};font-size:13pt;font-weight:700;margin-top:2pt;">PENILAIAN RISIKO KAWALAN JANGKITAN (ICRA) &ndash; ${esc(p.wardUnit)}</div>
+    <div style="font-family:${RPT_FONT};font-size:10.5pt;margin-top:2pt;">Unit Kawalan Infeksi, Hospital Tengku Permaisuri Norashikin</div>
+  </div>`;
+  body += `<p style="${RPT_S.p}"><strong>Penilaian Semasa Pembinaan &ndash; Lawatan Ke-${visitIdx+1}</strong></p>`;
+  body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
+    <tr><td style="${RPT_S.td};width:28%;"><strong>Wad/Unit</strong></td><td style="${RPT_S.td}">${esc(p.wardUnit)}</td></tr>
+    <tr><td style="${RPT_S.td}"><strong>PIC Bertanggungjawab</strong></td><td style="${RPT_S.td}">${esc(picLine)||'&mdash;'}</td></tr>
+    <tr><td style="${RPT_S.td}"><strong>Kelas ICRA</strong></td><td style="${RPT_S.td}">${hasClass?'Kelas '+p.icraClass:'Belum dikelaskan'}${p.activityType?' (Aktiviti '+p.activityType+')':''}${RISK_GROUPS[p.riskGroup]?' &middot; Risiko '+RISK_GROUPS[p.riskGroup].title:''}</td></tr>
+    <tr><td style="${RPT_S.td}"><strong>Skop Kerja</strong></td><td style="${RPT_S.td}">${esc(p.skopKerjaSummary||p.skopKerja)||'&mdash;'}</td></tr>
+    <tr><td style="${RPT_S.td}"><strong>Tarikh Lawatan</strong></td><td style="${RPT_S.td}">${fmtDate(l.tarikh)}</td></tr>
+  </table>`;
+
+  body += `<h2 style="${RPT_S.h2}">PENEMUAN DAN CADANGAN</h2>`;
+  body += `<table style="${RPT_S.table}" border="1" cellpadding="8">
+    <tr><td style="${RPT_S.tdHead};width:6%;text-align:center;">NO</td><td style="${RPT_S.tdHead};width:47%;">PENEMUAN</td><td style="${RPT_S.tdHead}">CADANGAN / SYOR</td></tr>
+    ${findings.map((f,i)=>`
+      <tr>
+        <td style="${RPT_S.td};text-align:center;vertical-align:top;">${i+1}</td>
+        <td style="${RPT_S.td};vertical-align:top;">${f.category?`<div style="font-weight:700;margin-bottom:3pt;">${esc(f.category.toUpperCase())}</div>`:''}<div>${esc(f.text)}</div>${reportPhotosHtml(f.photos, mode)}</td>
+        <td style="${RPT_S.td};vertical-align:top;">${f.recommendation?`<div>${esc(f.recommendation)}</div>`:'<div style="color:#999;">&mdash;</div>'}${f.actionBy?`<div style="margin-top:8pt;"><strong>Tindakan : ${esc(f.actionBy)}</strong></div>`:''}</td>
+      </tr>
+    `).join('')}
+  </table>`;
+
+  body += `<h2 style="${RPT_S.h2}">RUMUSAN</h2>`;
+  const catCount = new Set(findings.map(f=>f.category).filter(Boolean)).size || findings.length;
+  body += `<p style="${RPT_S.p}">Berdasarkan Penilaian Risiko Kawalan Jangkitan (ICRA)${hasClass?' Kelas '+p.icraClass+(p.activityType?' (Aktiviti '+p.activityType+')':''):''} Lawatan yang dijalankan pada ${fmtDate(l.tarikh)} bagi kawasan ${esc(p.wardUnit)}, sebanyak ${catCount} kategori penemuan dikenal pasti dan perlu diperbetulkan sepenuhnya sebelum kelulusan penyerahan (handover) kawasan untuk perkhidmatan klinikal dikeluarkan.</p>`;
+  body += `<p style="${RPT_S.p}">Semua tindakan pembetulan yang dinyatakan di atas hendaklah diselesaikan oleh pihak-pihak yang berkenaan mengikut bidang tugas masing-masing, untuk penyerahan kawasan bagi kegunaan perkhidmatan klinikal.</p>`;
+
+  body += `<table style="${RPT_S.table};margin-top:16pt;" border="1" cellpadding="10">
+    <tr>
+      <td style="${RPT_S.td};width:50%;vertical-align:top;"><strong>Laporan disediakan oleh:</strong><br><br><br>${esc(p.auth.nama)||esc(currentAuditor)||''}<br>${esc(p.auth.jawatan)||'Pegawai Perubatan'}<br>${esc(p.auth.unit)||'Unit Kawalan Infeksi (UKI)'}<br>HTPN</td>
+      <td style="${RPT_S.td};width:50%;vertical-align:top;"><strong>Laporan disemak oleh:</strong><br><br><br>${esc(printCtx.reviewerName||'')}<br>${esc(printCtx.reviewerTitle||'Ketua Unit Kawalan Infeksi')}<br>HTPN</td>
+    </tr>
+  </table>`;
+
   body += `</div>`;
   return body;
 }
