@@ -88,6 +88,9 @@
   .field-hint{font-size:12px;color:var(--ink-faint);margin-top:4px;}
   input[type=text],input[type=date],input[type=tel],textarea,select{width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);}
   input[type=file]{width:100%;font-size:13px;padding:8px;border:1.5px dashed var(--line-strong);border-radius:8px;background:var(--orange-50);}
+  .photo-input-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:11px 14px;border:1.5px dashed var(--line-strong);border-radius:8px;background:var(--orange-50);font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;text-align:center;box-sizing:border-box;}
+  .photo-input-btn:hover{background:var(--orange-100);}
+  .photo-input-btn:active{background:var(--orange-100);}
   input:focus,textarea:focus,select:focus{outline:2px solid var(--orange-600);outline-offset:1px;border-color:var(--orange-600);}
   textarea{resize:vertical;min-height:70px;}
   .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
@@ -140,6 +143,7 @@
   .proj-card.s-PRA{border-left-color:var(--stage-pra);}
   .proj-card:hover{box-shadow:0 4px 18px rgba(23,20,15,0.12);}
   .proj-tag{flex:0 0 26px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;letter-spacing:0.5px;writing-mode:vertical-rl;transform:rotate(180deg);padding:8px 0;}
+  .proj-tag.t-PRA{background:var(--stage-pra);}
   .proj-tag.t-DALAM{background:var(--stage-dalam);}
   .proj-tag.t-TC{background:var(--stage-tc);}
   .proj-tag.t-SELESAI{background:var(--stage-selesai);}
@@ -553,6 +557,19 @@ function fileChipHtml(file){
     <span class="attach-link">&#128206; ${esc(file.name)}</span>
   </a>`;
 }
+/* A clearer replacement for the raw <input type="file"> button, whose
+   native "Choose File / No file chosen" label confuses people into
+   thinking it's a generic file browser. This wraps the (hidden) input in
+   a styled button that says plainly what tapping it does — the OS still
+   shows its own Camera/Gallery chooser for image inputs (no "capture"
+   attribute is ever set, so that choice is always offered on mobile). */
+function fileInputHtml(accept, onchange, label, opts){
+  opts = opts || {};
+  return `<label class="photo-input-btn"${opts.style?` style="${opts.style}"`:''}>
+    <span>&#128247; ${label}</span>
+    <input type="file" accept="${accept}" ${opts.multiple?'multiple ':''}onchange="${onchange}" style="display:none;">
+  </label>`;
+}
 function blankForm(){
   return {
     id:null, wardUnit:'', location:'',
@@ -848,7 +865,7 @@ function renderDashboard(main){
       ` : `
         <div class="proj-grid">
           ${list.map(p=>{
-            const tagText = { DALAM:'PENDING', TC:'T&amp;C', SELESAI:'COMPLETED' }[p.status];
+            const tagText = { PRA:'PENDING', DALAM:'PENDING', TC:'T&amp;C', SELESAI:'COMPLETED' }[p.status];
             return `
             <div class="card proj-card s-${p.status}" onclick="goView('detail','${p.id}')">
               ${tagText?`<div class="proj-tag t-${p.status}">${tagText}</div>`:''}
@@ -975,12 +992,12 @@ function preFormHtml(){
       </div>
 
       <div class="field"><label class="field-label">Memo Panggilan (Call Memo) &mdash; image or PDF</label>
-        <input type="file" accept="image/*,application/pdf" onchange="handleMemoUpload(this)">
+        ${fileInputHtml('image/*,application/pdf', 'handleMemoUpload(this)', 'Ambil Gambar / Pilih Fail')}
         <div class="upload-row" id="memo-status">${f.memoFile?fileChipHtml(f.memoFile):''}</div>
       </div>
 
       <div class="field"><label class="field-label">Project Schedule / Chart &mdash; image or PDF (auto-estimates duration)</label>
-        <input type="file" accept="image/*,application/pdf" onchange="handleGanttUpload(this)">
+        ${fileInputHtml('image/*,application/pdf', 'handleGanttUpload(this)', 'Ambil Gambar / Pilih Fail')}
         <div class="upload-row" id="gantt-status">${f.ganttFile?fileChipHtml(f.ganttFile):''}</div>
       </div>
 
@@ -994,9 +1011,9 @@ function preFormHtml(){
         <div class="field-hint" style="margin-top:-2px;margin-bottom:6px;">Each task here is recorded as a Pre-Construction finding &mdash; it will NOT be dumped into the main Job Scope column in Excel.</div>
         <div id="scope-items-list">${scopeItemsHtml()}</div>
         <button class="btn btn-outline btn-sm" onclick="addScopeItem()">+ Add Task</button>
-        <div class="upload-row" style="margin-top:10px;">
+        <div class="upload-row" style="margin-top:10px;flex-direction:column;align-items:stretch;">
           <label style="font-size:12.5px;color:var(--ink-soft);">or scan from a photo (adds as a new task):</label>
-          <input type="file" accept="image/*,application/pdf" style="max-width:260px;" onchange="handleScopeScan(this)">
+          ${fileInputHtml('image/*,application/pdf', 'handleScopeScan(this)', 'Ambil Gambar / Pilih Fail')}
         </div>
         <div id="scope-status" class="upload-status"></div>
       </div>
@@ -1004,7 +1021,7 @@ function preFormHtml(){
       <div class="field" style="margin-top:18px;">
         <label class="field-label">Pre-ICRA Photos (optional)</label>
         <div class="field-hint" style="margin-top:-2px;margin-bottom:6px;">Attach site photos taken during the Pre-ICRA visit, if any.</div>
-        <input type="file" accept="image/*" multiple onchange="handlePreIcraPhotos(this)">
+        ${fileInputHtml('image/*', 'handlePreIcraPhotos(this)', 'Ambil Gambar / Pilih dari Galeri', {multiple:true})}
         <div class="photo-thumb-row" id="pre-icra-photos-row">${preIcraPhotosHtml()}</div>
       </div>
 
@@ -1365,7 +1382,7 @@ function renderDetail(main){
           ${(p.preIcraRecommendations||[]).length?`<div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Pre-ICRA Recommendation</div><ol style="margin:4px 0 0 0;padding-left:18px;font-size:13.5px;line-height:1.6;">${(p.preIcraRecommendations||[]).map(r=>`<li>${esc(r)}</li>`).join('')}</ol></div>`:''}
           ${p.additionalRecommendation?`<div style="margin-top:12px;"><div class="k" style="font-size:13.5px;color:var(--ink-soft);margin-bottom:4px;">Additional Recommendation</div><div style="font-size:13.5px;line-height:1.6;">${esc(p.additionalRecommendation)}</div></div>`:''}
           <div class="field-hint" style="margin-top:14px;">Upload the signed Pre-Construction permit (after printing &amp; obtaining signatures):</div>
-          <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','pre')">
+          ${fileInputHtml('image/*,application/pdf', `handleSignedUpload(this,'${p.id}','pre')`, 'Ambil Gambar / Pilih Fail')}
           ${p.preSignedFile?`<div style="margin-top:6px;">${fileChipHtml(Object.assign({},p.preSignedFile,{name:p.preSignedFile.name+' (signed)'}))}</div>`:''}
         </div>
 
@@ -1409,7 +1426,7 @@ function renderDetail(main){
               ${visitRecommendations(l).length ? `<div style="margin-top:8px;font-size:13px;"><strong>Recommendation:</strong>
                 <ol style="margin:4px 0 0 0;padding-left:18px;">${visitRecommendations(l).map(r=>`<li>${esc(r)}</li>`).join('')}</ol></div>` : ''}
               <div class="field-hint" style="margin-top:8px;">Upload signed copy (contractor acknowledgement):</div>
-              <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','during',${idx})">
+              ${fileInputHtml('image/*,application/pdf', `handleSignedUpload(this,'${p.id}','during',${idx})`, 'Ambil Gambar / Pilih Fail')}
               ${l.signedFile?`<div style="margin-top:6px;">${fileChipHtml(Object.assign({},l.signedFile,{name:l.signedFile.name+' (signed)'}))}</div>`:''}
             </div>
           `).join('')}
@@ -1524,7 +1541,7 @@ function duringDraftFindingsHtml(){
         </select>
       </div>
       <textarea oninput="duringDraft.findings[${i}].text=this.value" placeholder="Describe the finding&hellip;">${esc(fnd.text)}</textarea>
-      <input type="file" accept="image/*,application/pdf" multiple onchange="handleFindingPhotos(this,${i})">
+      ${fileInputHtml('image/*,application/pdf', `handleFindingPhotos(this,${i})`, 'Ambil Gambar / Pilih dari Galeri', {multiple:true})}
       <div class="photo-thumb-row" id="finding-photos-${i}">${fnd.photos.map((ph,pi)=>`<span style="position:relative;display:inline-block;"><img class="photo-thumb" src="${ph.thumb}" alt=""><button type="button" onclick="removeFindingPhoto(${i},${pi})" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;line-height:1;cursor:pointer;">&times;</button></span>`).join('')}</div>
       <label class="field-label" style="margin-top:8px;">Cadangan / Recommendation for this finding</label>
       <div class="field"><textarea oninput="duringDraft.findings[${i}].recommendation=this.value" placeholder="Recommendation specific to this finding&hellip;">${esc(fnd.recommendation)}</textarea></div>
@@ -1614,7 +1631,7 @@ function renderTCSection(p){
         <button class="btn btn-outline btn-sm" onclick="printReport('${p.id}','tc')">Print T&amp;C Report</button>
       </div>
       <div class="field-hint" style="margin-top:10px;">Upload signed T&amp;C form:</div>
-      <input type="file" accept="image/*,application/pdf" onchange="handleSignedUpload(this,'${p.id}','tc')">
+      ${fileInputHtml('image/*,application/pdf', `handleSignedUpload(this,'${p.id}','tc')`, 'Ambil Gambar / Pilih Fail')}
       ${p.tc.signedFile?`<div style="margin-top:6px;">${fileChipHtml(Object.assign({},p.tc.signedFile,{name:p.tc.signedFile.name+' (signed)'}))}</div>`:''}
     `;
   }
@@ -1677,7 +1694,7 @@ function tcDraftFindingsHtml(){
         </select>
       </div>
       <textarea oninput="tcDraft.findings[${i}].text=this.value" placeholder="Describe the finding&hellip;">${esc(fnd.text)}</textarea>
-      <input type="file" accept="image/*,application/pdf" multiple onchange="handleTCFindingPhotos(this,${i})">
+      ${fileInputHtml('image/*,application/pdf', `handleTCFindingPhotos(this,${i})`, 'Ambil Gambar / Pilih dari Galeri', {multiple:true})}
       <div class="photo-thumb-row" id="tc-finding-photos-${i}">${fnd.photos.map((ph,pi)=>`<span style="position:relative;display:inline-block;"><img class="photo-thumb" src="${ph.thumb}" alt=""><button type="button" onclick="removeTCFindingPhoto(${i},${pi})" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;line-height:1;cursor:pointer;">&times;</button></span>`).join('')}</div>
       <label class="field-label" style="margin-top:8px;">Cadangan / Recommendation for this finding</label>
       <div class="field"><textarea oninput="tcDraft.findings[${i}].recommendation=this.value" placeholder="Recommendation specific to this finding&hellip;">${esc(fnd.recommendation)}</textarea></div>
@@ -1794,7 +1811,7 @@ function renderReference(main){
       <div class="field"><label class="field-label">Google Drive Link (paste an existing share link)</label>
         <input type="text" id="ref-url" value="${esc(refDraft.url)}" oninput="refDraft.url=this.value" placeholder="https://drive.google.com/&hellip;"></div>
       <div class="field"><label class="field-label">Or upload a file (image / PDF)</label>
-        <input type="file" accept="image/*,application/pdf" onchange="handleRefFileUpload(this)">
+        ${fileInputHtml('image/*,application/pdf', 'handleRefFileUpload(this)', 'Ambil Gambar / Pilih Fail')}
         <div class="upload-row" id="ref-file-status"></div>
       </div>
       <button class="btn btn-primary" onclick="submitReference()">Save Reference</button>
