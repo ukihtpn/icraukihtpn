@@ -2076,7 +2076,8 @@ function buildReportBody(mode){
     if(p.additionalRecommendation) body += `<h2 style="${RPT_S.h2}">Additional Recommendation</h2><p style="${RPT_S.p}">${esc(p.additionalRecommendation)}</p>`;
     body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
       <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}<br>${esc(p.permit.jawatan)}${p.permit.syarikat&&p.permit.syarikat!==p.permit.nama?'<br>'+esc(p.permit.syarikat):''}<br>${fmtDate(p.permit.tarikh)}</td>
-      <td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}<br>${esc(p.auth.jawatan)}<br>${esc(p.auth.unit)}<br>${fmtDate(p.auth.tarikh)}</td></tr></table>`;
+      <td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}<br>${esc(p.auth.jawatan)}<br>${esc(p.auth.unit)}<br>${fmtDate(p.auth.tarikh)}</td></tr>
+      <tr><td style="${RPT_S.td};height:60pt;vertical-align:bottom;">Tandatangan / Signature:<br><br>______________________</td><td style="${RPT_S.td};height:60pt;vertical-align:bottom;">Tandatangan / Signature:<br><br>______________________</td></tr></table>`;
     if(includeAll) issueRows = collectAllFindings(p);
   } else if(stage==='during'){
     const l = p.duringLogs[visitIdx];
@@ -2101,7 +2102,8 @@ function buildReportBody(mode){
     const recs = visitRecommendations(l);
     if(recs.length) body += `<h2 style="${RPT_S.h2}">Recommendation</h2><ol>${recs.map(r=>`<li style="${RPT_S.li}">${esc(r)}</li>`).join('')}</ol>`;
     body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
-      <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
+      <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr>
+      <tr><td style="${RPT_S.td};height:60pt;vertical-align:bottom;">Tandatangan / Signature:<br><br>______________________</td><td style="${RPT_S.td};height:60pt;vertical-align:bottom;">Tandatangan / Signature:<br><br>______________________</td></tr></table>`;
     // Visit-specific print: feedback table only covers this visit's own findings.
     issueRows = l.findings.map(f=>({ text: esc(f.text), photos: [] }));
   } else if(stage==='tc'){
@@ -2123,7 +2125,8 @@ function buildReportBody(mode){
         }).join('')}
       </table>`;
     body += `<table style="${RPT_S.table}" border="1" cellpadding="6">
-      <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr></table>`;
+      <tr><td style="${RPT_S.td}"><strong>Permit Request By:</strong><br>${esc(p.permit.nama)}</td><td style="${RPT_S.td}"><strong>ICRA Authorized By:</strong><br>${esc(p.auth.nama)}</td></tr>
+      <tr><td style="${RPT_S.td};height:60pt;vertical-align:bottom;">Tandatangan / Signature:<br><br>______________________</td><td style="${RPT_S.td};height:60pt;vertical-align:bottom;">Tandatangan / Signature:<br><br>______________________</td></tr></table>`;
     issueRows = includeAll ? collectAllFindings(p) : findings.map(f=>({ text: esc(f.text), photos: [] }));
   }
 
@@ -2191,15 +2194,35 @@ function buildLaporanDuringBody(p, l, visitIdx, mode){
   body += `</div>`;
   return body;
 }
-function generateReport(mode){
+/* Wait until every <img> inside root has loaded (or failed / timed out) —
+   otherwise print()/html2canvas run before the Drive thumbnails arrive and
+   the photos come out blank. */
+function waitForImages(root, timeoutMs, cors){
+  const imgs = Array.from(root.querySelectorAll('img'));
+  return Promise.all(imgs.map(img=>new Promise(res=>{
+    const done = ()=>res();
+    if(cors){ img.crossOrigin = 'anonymous'; const src = img.src; img.removeAttribute('src'); img.src = src; }
+    else if(img.complete && img.naturalWidth>0) return done();
+    img.onload = done; img.onerror = done;
+    setTimeout(done, timeoutMs||10000);
+  })));
+}
+async function generateReport(mode){
   const body = buildReportBody(mode);
   if(!body) return;
   if(mode==='pdf'){
     const area = document.getElementById('printArea');
     area.innerHTML = body;
+    showToast('Preparing report\u2026');
+    await waitForImages(area, 10000);
+    const pr = findProject(printCtx.id);
+    const origTitle = document.title;
+    const stg = printCtx.stage==='pre'?'PreConstruction':printCtx.stage==='during'?'DuringConstruction':'TnC';
+    document.title = `ICRA_${(pr&&pr.wardUnit||'Report').replace(/[^a-z0-9]+/gi,'_')}_${stg}_${todayISO()}`;
     closePrintModal();
     document.body.classList.add('printing');
     window.print();
+    setTimeout(()=>{ document.title = origTitle; }, 1500);
   } else {
     const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
       <head><meta charset="utf-8"><title>ICRA Report</title></head>
@@ -2215,7 +2238,7 @@ function generateReport(mode){
     showToast('Word document downloaded.');
   }
 }
-window.onafterprint = ()=> document.body.classList.remove('printing');
+window.onafterprint = ()=>{ document.body.classList.remove('printing'); document.title = 'ICRA HTPN \u2014 Renovation & Construction Audit'; };
 
 function normalizePhoneForWhatsApp(tel){
   let digits = String(tel||'').replace(/\D/g,'');
@@ -2237,13 +2260,18 @@ async function sendReportToContractorWhatsApp(){
     const body = buildReportBody('pdf');
     if(!body) throw new Error('Could not build report.');
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'padding:20px;font-family:Inter,sans-serif;background:#fff;';
+    // Fixed A4-width box at the top-left of the page, so the layout is the
+    // same on phone/desktop and not shifted by scroll position.
+    wrapper.style.cssText = 'position:absolute;left:0;top:0;width:700px;padding:0;box-sizing:border-box;background:#fff;color:#17140F;z-index:-1;';
     wrapper.innerHTML = body;
+    window.scrollTo(0,0);
     document.body.appendChild(wrapper);
+    await waitForImages(wrapper, 12000, true);
     const pdfBlob = await html2pdf().set({
-      margin: 10,
+      margin: [10,10,10,10],
       filename: 'report.pdf',
-      html2canvas: { scale: 2, useCORS: true },
+      pagebreak: { mode:['css','legacy'], avoid:['tr','table','h2'] },
+      html2canvas: { scale: 2, useCORS: true, scrollX:0, scrollY:0, windowWidth:700, backgroundColor:'#ffffff' },
       jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
     }).from(wrapper).outputPdf('blob');
     document.body.removeChild(wrapper);
